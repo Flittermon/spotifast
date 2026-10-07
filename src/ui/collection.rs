@@ -9,8 +9,8 @@ use crate::api::models::{Album, Image, PlayableItem, Playlist, pick_image};
 use crate::app::App;
 use crate::i18n::{Locale, gettext, ngettext};
 use crate::model::{
-    Action, Dialog, DragTrack, Loadable, Page, PagedList, RowContext, RowPick, SortColumn,
-    TableItem, TableRowsCache, TableSort,
+    Action, Dialog, DragTrack, Loadable, Page, PagedList, PlaylistPage, RowContext, RowPick,
+    SortColumn, TableItem, TableRowsCache, TableSort,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::util;
@@ -244,7 +244,10 @@ pub fn actions_row(
                 }
             }
             let shuffle = app.playing_context_shuffle();
-            if theme::icon_button(
+            let smart = shuffle && app.settings.smart_shuffle;
+            // Smart Shuffle adds songs to playlists, so only they offer it.
+            let offers_smart = uri.starts_with("spotify:playlist:");
+            let shuffle_button = theme::icon_button(
                 ui,
                 Icon::Shuffle,
                 26.0,
@@ -254,15 +257,28 @@ pub fn actions_row(
                     palette.secondary
                 },
                 palette.text,
-                &if shuffle {
+                &if smart {
+                    gettext(locale, "Turn off Smart Shuffle")
+                } else if shuffle && offers_smart {
+                    gettext(locale, "Smart Shuffle")
+                } else if shuffle {
                     gettext(locale, "Shuffle off")
                 } else {
                     gettext(locale, "Shuffle")
                 },
-            )
-            .clicked()
-            {
-                app.actions.push(Action::SetShuffle(!shuffle));
+            );
+            if smart {
+                theme::paint_smart_badge(ui, shuffle_button.rect, 26.0, palette.accent);
+            }
+            if shuffle_button.clicked() {
+                // Off, Shuffle, Smart Shuffle, as in Spotify's own apps.
+                app.actions.push(if !shuffle {
+                    Action::SetShuffle(true)
+                } else if offers_smart && !smart {
+                    Action::SetSmartShuffle(true)
+                } else {
+                    Action::SetShuffle(false)
+                });
             }
         }
         if let Some((uri, saved)) = &actions.saved {
@@ -1456,9 +1472,8 @@ pub fn playlist(app: &mut App, ui: &mut egui::Ui, id: &str) {
                 app.actions
                     .push(Action::LoadMore(Page::Playlist(id.to_string())));
             }
-            let editable = app
-                .can_edit_playlist(playlist)
-                .then(|| (playlist.id.clone(), playlist.snapshot_id.clone()));
+            let can_edit = app.can_edit_playlist(playlist);
+            let editable = can_edit.then(|| (playlist.id.clone(), playlist.snapshot_id.clone()));
             table(
                 app,
                 ui,
@@ -1492,6 +1507,10 @@ pub fn playlist(app: &mut App, ui: &mut egui::Ui, id: &str) {
                     items_revision: page.items.revision,
                 },
             );
+            // Like Spotify, songs to add sit under playlists one can add to.
+            if can_edit && page.items.loaded_once && page.filter.trim().is_empty() {
+                recommended_songs(app, ui, playlist, &page);
+            }
         }
         Loadable::Loading | Loadable::NotLoaded => {
             if let Some(playlist) = &preview {
@@ -1514,6 +1533,141 @@ pub fn playlist(app: &mut App, ui: &mut egui::Ui, id: &str) {
         }
     }
     app.playlist_pages.insert(id.to_string(), page);
+}
+
+/// "Recommended songs" under a playlist: songs from the playlist's radio
+/// that it does not have yet, each with an Add button, and Refresh for
+/// others.
+fn recommended_songs(app: &mut App, ui: &mut egui::Ui, playlist: &Playlist, page: &PlaylistPage) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let songs = app.recommended_songs(&playlist.uri, page);
+    let refreshing = app.recommendations_refreshing(&playlist.uri);
+    let state = match app.recommendations_state(&playlist.uri) {
+        Some(Loadable::Loaded(_)) => Ok(true),
+        Some(Loadable::Failed(error)) => Err(error.clone()),
+        _ => Ok(false),
+    };
+    ui.add_space(36.0);
+    theme::section_title(ui, &palette, &gettext(locale, "Recommended songs"));
+    theme::subtle(
+        ui,
+        &palette,
+        &gettext(locale, "Based on what's in this playlist"),
+    );
+    ui.add_space(8.0);
+    match state {
+        Ok(false) => {
+            if matches!(
+                app.local_playback,
+                crate::backend::LocalPlayback::Unavailable
+                    | crate::backend::LocalPlayback::Failed(_)
+            ) {
+                theme::subtle(
+                    ui,
+                    &palette,
+                    &gettext(
+                        locale,
+                        "Recommendations come from playback on this computer. Turn it on in Settings.",
+                    ),
+                );
+            } else {
+                widgets::loading_row(ui, &palette, locale);
+            }
+        }
+        Err(error) => widgets::error_row(ui, app, &error, None),
+        Ok(true) if songs.is_empty() => {
+            theme::subtle(
+                ui,
+                &palette,
+                &gettext(locale, "No new songs to recommend right now."),
+            );
+        }
+        Ok(true) => {
+            let thin = app.settings.tracklist_compact;
+            let row_height = if thin {
+                theme::THIN_ROW_HEIGHT
+            } else {
+                theme::ROW_HEIGHT
+            };
+            let uris: Arc<[String]> = songs
+                .iter()
+                .map(|track| track.uri.clone())
+                .collect::<Vec<_>>()
+                .into();
+            let context = RowContext::Uris(Arc::clone(&uris));
+            let add_label = gettext(locale, "Add");
+            let add_width = 84.0;
+            for (index, track) in songs.iter().enumerate() {
+                let item = PlayableItem::Track(track.clone());
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let row_width = (ui.available_width() - add_width).max(160.0);
+                    ui.allocate_ui_with_layout(
+                        vec2(row_width, row_height),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            widgets::track_row(
+                                ui,
+                                app,
+                                TrackRow {
+                                    index,
+                                    number: None,
+                                    item: &item,
+                                    context: &context,
+                                    show_cover: !thin,
+                                    show_album: true,
+                                    added_at: None,
+                                    added_by: None,
+                                    show_added_by: false,
+                                    compact: false,
+                                    thin,
+                                    shift: 0.0,
+                                    picked: false,
+                                    picked_songs: &[],
+                                },
+                            );
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        vec2(add_width, row_height),
+                        Layout::right_to_left(Align::Center),
+                        |ui| {
+                            if theme::pill_button(ui, &palette, &add_label, false)
+                                .on_hover_text(
+                                    gettext(locale, "Add to this playlist").as_ref(),
+                                )
+                                .clicked()
+                            {
+                                app.actions.push(Action::AddToPlaylist {
+                                    playlist_id: playlist.id.clone(),
+                                    playlist_name: playlist.name.clone(),
+                                    items: vec![item.clone()],
+                                });
+                            }
+                        },
+                    );
+                });
+            }
+        }
+    }
+    ui.add_space(12.0);
+    let label = if refreshing {
+        gettext(locale, "Refreshing…")
+    } else {
+        gettext(locale, "Refresh")
+    };
+    if ui
+        .add_enabled_ui(!refreshing, |ui| {
+            theme::soft_button(ui, &palette, Some(Icon::Refresh), &label, false)
+        })
+        .inner
+        .clicked()
+    {
+        app.actions
+            .push(Action::RefreshRecommendations(playlist.uri.clone()));
+    }
+    ui.add_space(24.0);
 }
 
 pub fn album(app: &mut App, ui: &mut egui::Ui, id: &str) {
@@ -2154,6 +2308,132 @@ mod tests {
         assert!(app.actions.iter().any(|action| matches!(action,
             Action::LoadWindow { page: Page::Playlist(id), position } if id == "finite" && *position > 650 && *position < 750
         )), "a jump must request the distant rows, not the next sequential page");
+    }
+
+    /// An editable playlist lists songs from its radio that it does not
+    /// have under "Recommended songs", and Add adds one to it.
+    #[test]
+    fn an_editable_playlist_offers_recommended_songs_to_add() {
+        fn texts(shape: &egui::Shape, found: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Text(text) => found.push((
+                    text.galley.text().to_string(),
+                    text.pos + text.galley.rect.center().to_vec2(),
+                )),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        texts(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let song = |id: &str| Track {
+            id: Some(id.into()),
+            uri: format!("spotify:track:{id}"),
+            name: format!("Song {id}"),
+            duration_ms: 200_000,
+            artists: vec![ArtistRef {
+                name: format!("Artist {id}"),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut app = test_app();
+        app.backend.set_offline(true);
+        app.playlist_pages.insert(
+            "mine".into(),
+            PlaylistPage {
+                playlist: Loadable::Loaded(Playlist {
+                    id: "mine".into(),
+                    name: "Mine".into(),
+                    uri: "spotify:playlist:mine".into(),
+                    collaborative: true,
+                    tracks: Some(crate::api::models::TrackCount { total: 1 }),
+                    ..Default::default()
+                }),
+                items: PagedList {
+                    items: vec![crate::api::models::PlaylistItem {
+                        item: Some(PlayableItem::Track(song("in"))),
+                        ..Default::default()
+                    }],
+                    total: Some(1),
+                    loaded_once: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut draw = |app: &mut App, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1000.0, 2400.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| playlist(app, ui, "mine"));
+                },
+            );
+            output.textures_delta.clear();
+            let mut found = Vec::new();
+            for shape in &output.shapes {
+                texts(&shape.shape, &mut found);
+            }
+            found
+        };
+        let first = draw(&mut app, Vec::new());
+        assert!(first.iter().any(|(text, _)| text == "Recommended songs"));
+        let uri = "spotify:playlist:mine";
+        let generation = app.recommendations[uri].generation;
+        assert!(app.receive_recommendations(
+            uri,
+            generation,
+            &Ok(vec![song("in"), song("new")])
+        ));
+        draw(&mut app, Vec::new());
+        let shown = draw(&mut app, Vec::new());
+        let adds: Vec<egui::Pos2> = shown
+            .iter()
+            .filter(|(text, _)| text == "Add")
+            .map(|(_, pos)| *pos)
+            .collect();
+        assert_eq!(adds.len(), 1, "only the song the playlist lacks");
+        let pos = adds[0];
+        draw(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(
+            app.actions.iter().any(|action| matches!(
+                action,
+                Action::AddToPlaylist { playlist_id, items, .. }
+                    if playlist_id == "mine"
+                        && items.len() == 1
+                        && items[0].uri() == "spotify:track:new"
+            )),
+            "Add puts the song in the playlist"
+        );
+        app.backend.shutdown();
     }
 
     #[test]

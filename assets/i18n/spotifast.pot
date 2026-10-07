@@ -3056,3 +3056,39 @@ msgstr ""
 #: src/window.rs:35
 msgid "On Windows on ARM, the OpenGL that Spotifast draws with comes from Microsoft's OpenCL, OpenGL & Vulkan Compatibility Pack. Open its Microsoft Store page to install or repair it?"
 msgstr ""
+
+#: src/ui/collection.rs src/ui/player_bar.rs
+msgid "Smart Shuffle"
+msgstr ""
+
+#: src/ui/collection.rs
+msgid "Turn off Smart Shuffle"
+msgstr ""
+
+#: src/app/recommendations.rs
+msgid "Smart Shuffle on: a recommended song plays after every 3 songs"
+msgstr ""
+
+#: src/ui/collection.rs
+msgid "Recommended songs"
+msgstr ""
+
+#: src/ui/collection.rs
+msgid "Based on what's in this playlist"
+msgstr ""
+
+#: src/ui/collection.rs
+msgid "Recommendations come from playback on this computer. Turn it on in Settings."
+msgstr ""
+
+#: src/ui/collection.rs
+msgid "No new songs to recommend right now."
+msgstr ""
+
+#: src/ui/collection.rs
+msgid "Add"
+msgstr ""
+
+#: src/ui/collection.rs
+msgid "Add to this playlist"
+msgstr ""

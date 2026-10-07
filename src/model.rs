@@ -787,6 +787,50 @@ pub struct RadioPage {
     pub refreshing: bool,
 }
 
+/// Songs suggested for a playlist, like Spotify's "Recommended songs":
+/// taken from the playlist's radio mix, leaving out songs already in it.
+#[derive(Default)]
+pub struct Recommendations {
+    /// The playlist radio's mix, in Spotify's order.
+    pub songs: Loadable<Vec<Track>>,
+    /// Identifies the request whose answer may fill `songs`.
+    pub generation: u64,
+    /// A new mix is on its way; the songs shown stay until it arrives.
+    pub refreshing: bool,
+    /// Where in the remaining songs the page's list starts; Refresh moves
+    /// it along before asking Spotify for a new mix.
+    pub offset: usize,
+    /// Songs already offered by Smart Shuffle, so it does not repeat them.
+    pub used: std::collections::HashSet<String>,
+    /// Smart Shuffle had offered every song of the mix and asked for a
+    /// new one; if that brings nothing new either, songs may repeat.
+    pub exhausted: bool,
+    /// The URIs and title keys of the playlist's known songs, left out of
+    /// the recommendations.
+    pub members: std::collections::HashSet<String>,
+    /// Which loaded rows `members` was built from.
+    pub members_stamp: Option<(u64, usize, usize, usize)>,
+}
+
+/// Smart Shuffle's progress through the playing playlist: after every
+/// [`SMART_SHUFFLE_EVERY`] songs from the playlist, one recommended song is
+/// queued to play next.
+#[derive(Default)]
+pub struct SmartShuffle {
+    /// The playlist the count belongs to.
+    pub playlist: Option<String>,
+    /// Songs from the playlist started since the last recommendation.
+    pub since_last: u32,
+    /// Recommendations queued that have not started yet.
+    pub pending: Vec<String>,
+    /// Every recommendation Smart Shuffle queued this session, so the
+    /// interface can mark them.
+    pub added: std::collections::HashSet<String>,
+}
+
+/// How many songs of the playlist play between two Smart Shuffle songs.
+pub const SMART_SHUFFLE_EVERY: u32 = 3;
+
 #[derive(Default)]
 pub struct ShowPage {
     pub show: Loadable<Show>,
@@ -1049,6 +1093,10 @@ pub enum Action {
     SaveQueueAsPlaylist,
     /// Save a radio page's songs to a new playlist, by the seed's URI.
     SaveRadio(String),
+    /// Turn Smart Shuffle on or off. On also turns Shuffle on.
+    SetSmartShuffle(bool),
+    /// Show the next few recommended songs for a playlist, by its URI.
+    RefreshRecommendations(String),
     RefreshQueue,
     CopyLink(String),
     /// Copy picked songs' links, one per line, and remember the songs so a

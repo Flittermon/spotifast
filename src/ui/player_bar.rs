@@ -612,6 +612,7 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
     };
 
     let shuffle_color = if shuffle { palette.accent } else { dim };
+    let smart = shuffle && app.settings.smart_shuffle;
     let mut cell = centered(ui, slot(widths[0]));
     let shuffle_button = theme::icon_button(
         &mut cell,
@@ -623,8 +624,15 @@ fn transport(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>, region:
         } else {
             palette.text
         },
-        &gettext(app.locale, "Shuffle"),
+        &if smart {
+            gettext(app.locale, "Smart Shuffle")
+        } else {
+            gettext(app.locale, "Shuffle")
+        },
     );
+    if smart {
+        theme::paint_smart_badge(&cell, shuffle_button.rect, 17.0, palette.accent);
+    }
     shuffle_button.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::Checkbox,

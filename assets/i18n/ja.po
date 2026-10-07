@@ -3156,3 +3156,39 @@ msgstr "Windows on ARM では、Spotifast の描画に使う OpenGL は Microsof
 
 #~ msgid "Reduce lyrics motion"
 #~ msgstr "歌詞の動きを減らす"
+
+#: src/ui/collection.rs src/ui/player_bar.rs
+msgid "Smart Shuffle"
+msgstr "スマートシャッフル"
+
+#: src/ui/collection.rs
+msgid "Turn off Smart Shuffle"
+msgstr "スマートシャッフルをオフにする"
+
+#: src/app/recommendations.rs
+msgid "Smart Shuffle on: a recommended song plays after every 3 songs"
+msgstr "スマートシャッフル オン：3曲ごとにおすすめの曲を再生します"
+
+#: src/ui/collection.rs
+msgid "Recommended songs"
+msgstr "おすすめの曲"
+
+#: src/ui/collection.rs
+msgid "Based on what's in this playlist"
+msgstr "このプレイリストの内容に基づいています"
+
+#: src/ui/collection.rs
+msgid "Recommendations come from playback on this computer. Turn it on in Settings."
+msgstr "おすすめはこのコンピューターでの再生から取得します。設定でオンにしてください。"
+
+#: src/ui/collection.rs
+msgid "No new songs to recommend right now."
+msgstr "今はおすすめできる新しい曲がありません。"
+
+#: src/ui/collection.rs
+msgid "Add"
+msgstr "追加"
+
+#: src/ui/collection.rs
+msgid "Add to this playlist"
+msgstr "このプレイリストに追加"

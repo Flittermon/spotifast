@@ -3166,3 +3166,39 @@ msgstr "I Windows på ARM kommer OpenGL, som Spotifast ritar med, från Microsof
 
 #~ msgid "Reduce lyrics motion"
 #~ msgstr "Minska låttextrörelse"
+
+#: src/ui/collection.rs src/ui/player_bar.rs
+msgid "Smart Shuffle"
+msgstr "Smart Shuffle"
+
+#: src/ui/collection.rs
+msgid "Turn off Smart Shuffle"
+msgstr "Stäng av Smart Shuffle"
+
+#: src/app/recommendations.rs
+msgid "Smart Shuffle on: a recommended song plays after every 3 songs"
+msgstr "Smart Shuffle på: en rekommenderad låt spelas efter var 3:e låt"
+
+#: src/ui/collection.rs
+msgid "Recommended songs"
+msgstr "Rekommenderade låtar"
+
+#: src/ui/collection.rs
+msgid "Based on what's in this playlist"
+msgstr "Baserat på innehållet i den här spellistan"
+
+#: src/ui/collection.rs
+msgid "Recommendations come from playback on this computer. Turn it on in Settings."
+msgstr "Rekommendationer kommer från uppspelning på den här datorn. Slå på det i Inställningar."
+
+#: src/ui/collection.rs
+msgid "No new songs to recommend right now."
+msgstr "Inga nya låtar att rekommendera just nu."
+
+#: src/ui/collection.rs
+msgid "Add"
+msgstr "Lägg till"
+
+#: src/ui/collection.rs
+msgid "Add to this playlist"
+msgstr "Lägg till i den här spellistan"

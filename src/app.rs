@@ -366,6 +366,10 @@ pub struct App {
     pub show_pages: HashMap<String, ShowPage>,
     /// Radio pages by the seed's URI.
     pub radio_pages: HashMap<String, RadioPage>,
+    /// Recommended songs for playlists, by the playlist's URI.
+    pub recommendations: HashMap<String, Recommendations>,
+    /// Smart Shuffle's count through the playing playlist.
+    pub smart_shuffle: SmartShuffle,
     pub track_cache: HashMap<String, Track>,
     track_requests: HashSet<String>,
     /// Album URIs already resolved or attempted through librespot this session.
@@ -834,6 +838,8 @@ impl App {
             artist_pages: HashMap::new(),
             show_pages: HashMap::new(),
             radio_pages: HashMap::new(),
+            recommendations: HashMap::new(),
+            smart_shuffle: SmartShuffle::default(),
             track_cache: HashMap::new(),
             track_requests: HashSet::new(),
             album_types_requested: HashSet::new(),
@@ -1961,7 +1967,11 @@ impl App {
                     seed,
                     generation,
                     result,
-                } => self.receive_radio(&seed, generation, result),
+                } => {
+                    if !self.receive_recommendations(&seed, generation, &result) {
+                        self.receive_radio(&seed, generation, result);
+                    }
+                }
                 Event::AlbumType { uri, result } => match result {
                     Ok(true) => {
                         self.confirmed_ep_albums.insert(uri);
@@ -2610,6 +2620,8 @@ impl App {
         }
         let queue_already_updated =
             self.queue_start_pending.take().as_ref() == Some(&self.target());
+        // Whether the song is one queued by hand, before its row is consumed.
+        let from_manual_queue = self.manual_queue.first() == Some(&now.uri);
         let repeating = same_uri && new_occurrence && now.repeat == RepeatMode::Track;
         // Restore the saved queue only when the remembered track resumes.
         if !self.resume_queue.is_empty() {
@@ -2654,6 +2666,9 @@ impl App {
         self.last_now_playing_uri = Some(now.uri.clone());
         if now.local {
             self.last_now_playing_sequence = self.local.track_sequence;
+        }
+        if !repeating && !now.is_episode {
+            self.smart_shuffle_song_started(&now.uri, from_manual_queue);
         }
         self.resume_context = self.playing_context_uri();
         self.resume_track = Some(now.uri.clone());
@@ -8444,9 +8459,28 @@ impl App {
                 let shuffle = self
                     .now_playing()
                     .map_or(self.shuffle_wanted, |now| now.shuffle);
-                self.set_shuffle(!shuffle);
+                // Off, Shuffle, then Smart Shuffle while a playlist plays,
+                // as in Spotify's own apps.
+                if !shuffle {
+                    self.set_smart_shuffle(false);
+                    self.set_shuffle(true);
+                } else if !self.settings.smart_shuffle && self.smart_shuffle_playlist().is_some() {
+                    self.set_smart_shuffle(true);
+                } else {
+                    self.set_smart_shuffle(false);
+                    self.set_shuffle(false);
+                }
             }
-            Action::SetShuffle(shuffle) => self.set_shuffle(shuffle),
+            Action::SetShuffle(shuffle) => {
+                // Turning Shuffle on from off starts plain Shuffle; turning
+                // it off ends Smart Shuffle too.
+                if !shuffle || !self.shuffle_wanted {
+                    self.set_smart_shuffle(false);
+                }
+                self.set_shuffle(shuffle);
+            }
+            Action::SetSmartShuffle(on) => self.set_smart_shuffle(on),
+            Action::RefreshRecommendations(uri) => self.refresh_recommendations(&uri),
             Action::CycleRepeat => {
                 let mode = self.now_playing().map(|now| now.repeat).unwrap_or_default();
                 self.set_repeat(mode.next());
@@ -10454,6 +10488,7 @@ fn cover_error(locale: Locale, error: &crate::api::client::ApiError) -> String {
 }
 
 mod radio;
+mod recommendations;
 
 #[cfg(test)]
 mod tests {
@@ -23096,5 +23131,405 @@ mod tests {
             app.library.liked.revision, before,
             "the shorter list must invalidate the table's cached row order"
         );
+    }
+
+
+    // Recommended songs and Smart Shuffle.
+
+    fn playlist_row(track: Track) -> PlaylistItem {
+        PlaylistItem {
+            item: Some(PlayableItem::Track(track)),
+            ..Default::default()
+        }
+    }
+
+    fn playlist_with(rows: Vec<Track>) -> PlaylistPage {
+        let mut page = PlaylistPage::default();
+        page.items.items = rows.into_iter().map(playlist_row).collect();
+        page.items.loaded_once = true;
+        page
+    }
+
+    fn mix(ids: &[&str]) -> Vec<Track> {
+        ids.iter().map(|id| radio_song(id, &format!("Artist {id}"))).collect()
+    }
+
+    fn uris_of(tracks: &[Track]) -> Vec<String> {
+        tracks.iter().map(|track| track.uri.clone()).collect()
+    }
+
+    /// Plays `uri` on this computer, as the engine reports a song starting.
+    fn start_song(app: &mut App, uri: &str) {
+        app.local.track = Some(crate::player::LocalTrack {
+            uri: uri.into(),
+            ..Default::default()
+        });
+        app.local.track_sequence += 1;
+        app.local.playback = Playback::Playing;
+        app.on_now_playing_changed();
+    }
+
+    fn playing_playlist(app: &mut App, uri: &str) {
+        app.assumed_context = Some(AssumedContext {
+            uri: uri.into(),
+            shuffle: Some(true),
+            at: Instant::now(),
+        });
+    }
+
+    /// The playlist's recommendations leave out what it already has, by
+    /// link and by title and artist, and list each song once.
+    #[test]
+    fn recommendations_leave_out_songs_the_playlist_has() {
+        let mut app = headless_app();
+        let uri = "spotify:playlist:mine";
+        // The same song as the mix's "b", from another release.
+        let mut other_release = radio_song("b-single", "Artist b");
+        other_release.name = "Song b".into();
+        let mut page = playlist_with(vec![radio_song("a", "Artist a"), other_release]);
+        page.local_additions.insert("spotify:track:c".into());
+
+        assert!(app.recommended_songs(uri, &page).is_empty());
+        assert!(matches!(
+            app.recommendations_state(uri),
+            Some(Loadable::Loading)
+        ));
+        let generation = app.recommendations[uri].generation;
+        let mut songs = mix(&["a", "b", "c", "d", "e"]);
+        songs.push(radio_song("d-again", "Artist d"));
+        songs[4].is_playable = Some(false);
+        songs.last_mut().unwrap().name = "Song d".into();
+        songs.push(radio_song("f", "Artist f"));
+        assert!(app.receive_recommendations(uri, generation, &Ok(songs)));
+        assert_eq!(
+            uris_of(&app.recommended_songs(uri, &page)),
+            vec!["spotify:track:d", "spotify:track:f"]
+        );
+        assert!(app.track_cache.contains_key("d"), "song details are kept");
+
+        // Adding one to the playlist takes it off the list.
+        page.local_additions.insert("spotify:track:d".into());
+        assert_eq!(
+            uris_of(&app.recommended_songs(uri, &page)),
+            vec!["spotify:track:f"]
+        );
+    }
+
+    /// An answer meant for a radio page is left for it.
+    #[test]
+    fn a_radio_answer_reaches_its_own_page() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        app.auth = AuthStatus::Connected {
+            username: "test".into(),
+        };
+        let seed = "spotify:playlist:mine";
+        app.recommended_songs(seed, &PlaylistPage::default());
+        app.apply(Action::Open(Page::Radio(seed.into())), &ctx);
+        let radio = app.radio_pages[seed].generation;
+        let recommended = app.recommendations[seed].generation;
+        assert_ne!(radio, recommended);
+        assert!(!app.receive_recommendations(seed, radio, &Ok(mix(&["r"]))));
+        app.receive_radio(seed, radio, Ok(mix(&["r"])));
+        assert!(app.radio_pages[seed].songs.get().is_some());
+        assert!(matches!(
+            app.recommendations_state(seed),
+            Some(Loadable::Loading)
+        ));
+    }
+
+    /// Refresh shows the next ten, then asks for a new mix once the songs
+    /// run out, keeping the last ones on screen until it arrives.
+    #[test]
+    fn refreshing_recommendations_moves_through_the_mix_then_asks_again() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let uri = "spotify:playlist:mine";
+        let page = PlaylistPage::default();
+        app.recommended_songs(uri, &page);
+        let ids: Vec<String> = (0..25).map(|i| format!("s{i}")).collect();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let generation = app.recommendations[uri].generation;
+        app.receive_recommendations(uri, generation, &Ok(mix(&ids)));
+        let shown = app.recommended_songs(uri, &page);
+        assert_eq!(shown.len(), 10);
+        assert_eq!(shown[0].uri, "spotify:track:s0");
+
+        app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
+        assert_eq!(app.recommended_songs(uri, &page)[0].uri, "spotify:track:s10");
+        app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
+        let last = app.recommended_songs(uri, &page);
+        assert_eq!(last.len(), 5);
+        assert_eq!(last[0].uri, "spotify:track:s20");
+        assert!(!app.recommendations_refreshing(uri));
+
+        app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
+        assert!(app.recommendations_refreshing(uri), "a new mix is asked for");
+        assert_eq!(app.recommended_songs(uri, &page)[0].uri, "spotify:track:s20");
+        let asked = app.recommendations[uri].generation;
+        assert_ne!(asked, generation);
+        app.receive_recommendations(uri, asked, &Err("Couldn't load this radio.".into()));
+        assert_eq!(
+            app.recommended_songs(uri, &page)[0].uri,
+            "spotify:track:s20",
+            "a failed refresh keeps the songs"
+        );
+        app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
+        let asked = app.recommendations[uri].generation;
+        app.receive_recommendations(uri, asked, &Ok(mix(&["n1", "n2"])));
+        assert_eq!(
+            uris_of(&app.recommended_songs(uri, &page)),
+            vec!["spotify:track:n1", "spotify:track:n2"]
+        );
+    }
+
+    /// A failed first mix is shown as failed, and Refresh tries again.
+    #[test]
+    fn a_failed_recommendation_mix_can_be_retried() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let uri = "spotify:playlist:mine";
+        app.recommended_songs(uri, &PlaylistPage::default());
+        let first = app.recommendations[uri].generation;
+        app.receive_recommendations(uri, first, &Err("Couldn't load this radio.".into()));
+        assert!(matches!(
+            app.recommendations_state(uri),
+            Some(Loadable::Failed(_))
+        ));
+        app.recommended_songs(uri, &PlaylistPage::default());
+        assert_eq!(
+            app.recommendations[uri].generation, first,
+            "drawing does not ask again by itself"
+        );
+        app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
+        assert!(matches!(
+            app.recommendations_state(uri),
+            Some(Loadable::Loading)
+        ));
+        assert_ne!(app.recommendations[uri].generation, first);
+    }
+
+    /// Smart Shuffle plays a recommended song after every three of the
+    /// playlist's songs, never one the playlist has, never the same twice.
+    #[test]
+    fn smart_shuffle_adds_a_recommendation_after_every_three_songs() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let playlist = "spotify:playlist:mine";
+        app.playlist_pages
+            .insert("mine".into(), playlist_with(vec![radio_song("r1", "Artist r1")]));
+        playing_playlist(&mut app, playlist);
+        app.shuffle_wanted = true;
+        app.apply(Action::SetSmartShuffle(true), &ctx);
+        assert!(app.smart_shuffle_on());
+        assert!(app.settings.smart_shuffle);
+        let generation = app.recommendations[playlist].generation;
+        app.receive_recommendations(
+            playlist,
+            generation,
+            &Ok(mix(&["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8"])),
+        );
+
+        start_song(&mut app, "spotify:track:p1");
+        start_song(&mut app, "spotify:track:p2");
+        assert!(app.manual_queue.is_empty(), "nothing yet after two songs");
+        start_song(&mut app, "spotify:track:p3");
+        assert_eq!(
+            app.manual_queue,
+            vec!["spotify:track:r2".to_string()],
+            "the third song queues a recommendation the playlist lacks"
+        );
+        assert!(app.smart_shuffle_added("spotify:track:r2"));
+
+        start_song(&mut app, "spotify:track:r2");
+        assert!(app.manual_queue.is_empty(), "the recommendation played");
+        start_song(&mut app, "spotify:track:p4");
+        start_song(&mut app, "spotify:track:p5");
+        assert!(app.manual_queue.is_empty());
+        start_song(&mut app, "spotify:track:p6");
+        assert_eq!(app.manual_queue, vec!["spotify:track:r3".to_string()]);
+    }
+
+    /// Songs queued by hand play as usual and are not counted as the
+    /// playlist's.
+    #[test]
+    fn smart_shuffle_does_not_count_songs_queued_by_hand() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let playlist = "spotify:playlist:mine";
+        playing_playlist(&mut app, playlist);
+        app.shuffle_wanted = true;
+        app.apply(Action::SetSmartShuffle(true), &ctx);
+        let generation = app.recommendations[playlist].generation;
+        app.receive_recommendations(playlist, generation, &Ok(mix(&["r1", "r2"])));
+
+        start_song(&mut app, "spotify:track:p1");
+        app.apply(
+            Action::AddToQueue {
+                uri: "spotify:track:mine".into(),
+                label: "Mine".into(),
+            },
+            &ctx,
+        );
+        start_song(&mut app, "spotify:track:mine");
+        start_song(&mut app, "spotify:track:p2");
+        assert!(app.manual_queue.is_empty(), "two of the playlist's songs so far");
+        start_song(&mut app, "spotify:track:p3");
+        assert_eq!(app.manual_queue, vec!["spotify:track:r1".to_string()]);
+    }
+
+    /// The count waits for the mix: once it arrives, the overdue
+    /// recommendation is queued.
+    #[test]
+    fn smart_shuffle_queues_when_a_late_mix_arrives() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let playlist = "spotify:playlist:mine";
+        playing_playlist(&mut app, playlist);
+        app.shuffle_wanted = true;
+        app.apply(Action::SetSmartShuffle(true), &ctx);
+        for song in ["p1", "p2", "p3", "p4"] {
+            start_song(&mut app, &format!("spotify:track:{song}"));
+        }
+        assert!(app.manual_queue.is_empty());
+        let generation = app.recommendations[playlist].generation;
+        app.receive_recommendations(playlist, generation, &Ok(mix(&["r1"])));
+        assert_eq!(app.manual_queue, vec!["spotify:track:r1".to_string()]);
+    }
+
+    /// A recommendation that never starts, because it was skipped or
+    /// cleared, does not stop the next one.
+    #[test]
+    fn a_lost_smart_shuffle_song_does_not_stop_the_next() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let playlist = "spotify:playlist:mine";
+        playing_playlist(&mut app, playlist);
+        app.shuffle_wanted = true;
+        app.apply(Action::SetSmartShuffle(true), &ctx);
+        let generation = app.recommendations[playlist].generation;
+        app.receive_recommendations(playlist, generation, &Ok(mix(&["r1", "r2", "r3"])));
+        for song in ["p1", "p2", "p3"] {
+            start_song(&mut app, &format!("spotify:track:{song}"));
+        }
+        assert_eq!(app.smart_shuffle.pending, vec!["spotify:track:r1".to_string()]);
+        app.manual_queue.clear();
+        for song in ["p4", "p5", "p6", "p7", "p8", "p9"] {
+            start_song(&mut app, &format!("spotify:track:{song}"));
+        }
+        assert_eq!(app.smart_shuffle.pending, vec!["spotify:track:r2".to_string()]);
+    }
+
+    /// Once every song of the mix has been played, a new mix is asked for.
+    #[test]
+    fn smart_shuffle_asks_for_a_new_mix_before_it_runs_out() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let playlist = "spotify:playlist:mine";
+        playing_playlist(&mut app, playlist);
+        app.shuffle_wanted = true;
+        app.apply(Action::SetSmartShuffle(true), &ctx);
+        let generation = app.recommendations[playlist].generation;
+        app.receive_recommendations(playlist, generation, &Ok(mix(&["r1", "r2"])));
+        for song in ["p1", "p2", "p3"] {
+            start_song(&mut app, &format!("spotify:track:{song}"));
+        }
+        assert!(
+            app.recommendations_refreshing(playlist),
+            "few songs are left, so the next mix is fetched"
+        );
+        let asked = app.recommendations[playlist].generation;
+        app.receive_recommendations(playlist, asked, &Ok(mix(&["r1", "n1"])));
+        start_song(&mut app, "spotify:track:r1");
+        for song in ["p4", "p5", "p6"] {
+            start_song(&mut app, &format!("spotify:track:{song}"));
+        }
+        assert_eq!(
+            app.manual_queue,
+            vec!["spotify:track:n1".to_string()],
+            "a song already offered is not offered again"
+        );
+    }
+
+    /// Smart Shuffle only adds to playlists, and only while it is on.
+    #[test]
+    fn smart_shuffle_stays_out_of_albums_and_plain_shuffle() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let playlist = "spotify:playlist:mine";
+        playing_playlist(&mut app, playlist);
+        app.shuffle_wanted = true;
+        app.recommended_songs(playlist, &PlaylistPage::default());
+        let generation = app.recommendations[playlist].generation;
+        app.receive_recommendations(playlist, generation, &Ok(mix(&["r1", "r2"])));
+        for song in ["p1", "p2", "p3", "p4"] {
+            start_song(&mut app, &format!("spotify:track:{song}"));
+        }
+        assert!(app.manual_queue.is_empty(), "plain Shuffle adds nothing");
+
+        app.apply(Action::SetSmartShuffle(true), &ctx);
+        playing_playlist(&mut app, "spotify:album:alb");
+        for song in ["a1", "a2", "a3", "a4"] {
+            start_song(&mut app, &format!("spotify:track:{song}"));
+        }
+        assert!(app.manual_queue.is_empty(), "albums play as they are");
+    }
+
+    /// The player bar's Shuffle goes Off, Shuffle, Smart Shuffle while a
+    /// playlist plays, and Off, Shuffle otherwise.
+    #[test]
+    fn shuffle_cycles_through_smart_shuffle_for_playlists() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        playing_playlist(&mut app, "spotify:playlist:mine");
+        app.apply(Action::ToggleShuffle, &ctx);
+        assert!(app.shuffle_wanted);
+        assert!(!app.smart_shuffle_on());
+        app.apply(Action::ToggleShuffle, &ctx);
+        assert!(app.shuffle_wanted);
+        assert!(app.smart_shuffle_on());
+        app.apply(Action::ToggleShuffle, &ctx);
+        assert!(!app.shuffle_wanted);
+        assert!(!app.smart_shuffle_on());
+        assert!(!app.settings.smart_shuffle);
+
+        playing_playlist(&mut app, "spotify:album:alb");
+        app.apply(Action::ToggleShuffle, &ctx);
+        assert!(app.shuffle_wanted);
+        app.apply(Action::ToggleShuffle, &ctx);
+        assert!(!app.shuffle_wanted, "albums have no Smart Shuffle");
+        assert!(!app.settings.smart_shuffle);
+    }
+
+    /// Shuffle off ends Smart Shuffle; Shuffle on from off is plain, and
+    /// Smart Shuffle turns Shuffle on.
+    #[test]
+    fn setting_shuffle_ends_or_starts_smart_shuffle() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        app.apply(Action::SetSmartShuffle(true), &ctx);
+        assert!(app.shuffle_wanted, "Smart Shuffle turns Shuffle on");
+        assert!(app.smart_shuffle_on());
+        app.apply(Action::SetShuffle(true), &ctx);
+        assert!(app.smart_shuffle_on(), "already on: nothing changes");
+        app.apply(Action::SetShuffle(false), &ctx);
+        assert!(!app.smart_shuffle_on());
+        assert!(!app.settings.smart_shuffle);
+        app.apply(Action::SetShuffle(true), &ctx);
+        assert!(app.shuffle_wanted);
+        assert!(!app.smart_shuffle_on(), "plain Shuffle from off");
+    }
+
+    #[test]
+    fn smart_shuffle_is_off_by_default_and_remembered() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!settings.smart_shuffle);
+        let settings = Settings {
+            smart_shuffle: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert!(restored.smart_shuffle);
     }
 }

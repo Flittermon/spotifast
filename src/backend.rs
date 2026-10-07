@@ -6,7 +6,7 @@
 //! the interface with `request_repaint`, so the app stays event-driven and
 //! idle when nothing is happening.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1346,8 +1346,10 @@ struct Worker {
     album_type_lookup: AlbumTypeLookup,
     /// Saved shows waiting for the streaming session to say which are audiobooks.
     audiobook_lookup: BTreeSet<String>,
-    /// Radios asked for before the streaming session was ready, by seed.
-    radio_waiting: BTreeMap<String, u64>,
+    /// Radios to resolve once the session is ready. A list, not a map: a
+    /// radio page and a playlist's recommendations may ask for the same
+    /// seed at once, each waiting for its own answer.
+    radio_waiting: Vec<(String, u64)>,
     /// True while a playback grant or engine connection is in flight, so a
     /// second attempt does not pile up.
     engine_busy: bool,
@@ -1412,7 +1414,7 @@ impl Worker {
             rootlist_pending: false,
             album_type_lookup: AlbumTypeLookup::default(),
             audiobook_lookup: BTreeSet::new(),
-            radio_waiting: BTreeMap::new(),
+            radio_waiting: Vec::new(),
             engine_busy: false,
             search_tasks: Vec::new(),
             engine_restart_pending: false,
@@ -1979,7 +1981,7 @@ impl Worker {
                     self.start_audiobook_lookup();
                 }
                 Command::Radio { seed, generation } => {
-                    self.radio_waiting.insert(seed, generation);
+                    self.radio_waiting.push((seed, generation));
                     self.start_radio();
                 }
                 Command::RadioResolved {

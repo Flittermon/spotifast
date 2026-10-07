@@ -1409,6 +1409,16 @@ fn track_row_contents(
             },
             Some(app.backend.art()),
         );
+        // A sparkle marks the songs Smart Shuffle put in the queue, as in
+        // Spotify's own apps.
+        if matches!(row.context, RowContext::Queue) && app.smart_shuffle_added(row.item.uri()) {
+            let badge = Rect::from_center_size(
+                cover_rect.right_bottom() - vec2(2.0, 2.0),
+                Vec2::splat(15.0),
+            );
+            painter.circle_filled(badge.center(), 8.0, palette.window);
+            theme::paint_icon(ui, Icon::Sparkles, badge, 11.0, palette.accent);
+        }
         // Without a number column the cover carries the play control:
         // hover shows it, a click uses it, and what plays shows there.
         if cols.number == 0.0 {

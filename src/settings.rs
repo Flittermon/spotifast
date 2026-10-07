@@ -279,6 +279,9 @@ pub struct Settings {
     pub queue_width: f32,
     /// Use compact single-line rows without cover art in track lists.
     pub tracklist_compact: bool,
+    /// Smart Shuffle: while Shuffle is on and a playlist plays, a
+    /// recommended song plays after every three of the playlist's songs.
+    pub smart_shuffle: bool,
     /// Linux: middle-click a list to autoscroll it. Off by default, because
     /// Linux desktops usually paste the primary selection on middle click.
     /// Windows always autoscrolls and macOS never does.
@@ -441,6 +444,7 @@ impl Default for Settings {
             lyrics_width: 360.0,
             queue_width: 360.0,
             tracklist_compact: false,
+            smart_shuffle: false,
             middle_click_autoscroll: false,
             search_history: Vec::new(),
             show_shortcut_hints: true,

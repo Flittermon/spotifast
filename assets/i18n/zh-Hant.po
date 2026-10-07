@@ -3085,3 +3085,39 @@ msgstr "在 ARM 版 Windows 上，Spotifast 用來繪製介面的 OpenGL 由 Mic
 
 #~ msgid "Reduce lyrics motion"
 #~ msgstr "減少歌詞動畫"
+
+#: src/ui/collection.rs src/ui/player_bar.rs
+msgid "Smart Shuffle"
+msgstr "智慧隨機播放"
+
+#: src/ui/collection.rs
+msgid "Turn off Smart Shuffle"
+msgstr "關閉智慧隨機播放"
+
+#: src/app/recommendations.rs
+msgid "Smart Shuffle on: a recommended song plays after every 3 songs"
+msgstr "智慧隨機播放已開啟：每 3 首歌後播放一首推薦歌曲"
+
+#: src/ui/collection.rs
+msgid "Recommended songs"
+msgstr "推薦歌曲"
+
+#: src/ui/collection.rs
+msgid "Based on what's in this playlist"
+msgstr "根據此播放清單中的內容"
+
+#: src/ui/collection.rs
+msgid "Recommendations come from playback on this computer. Turn it on in Settings."
+msgstr "推薦來自這台電腦上的播放。請在設定中開啟。"
+
+#: src/ui/collection.rs
+msgid "No new songs to recommend right now."
+msgstr "目前沒有可推薦的新歌曲。"
+
+#: src/ui/collection.rs
+msgid "Add"
+msgstr "新增"
+
+#: src/ui/collection.rs
+msgid "Add to this playlist"
+msgstr "加入此播放清單"

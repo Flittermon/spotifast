@@ -69,6 +69,8 @@ clients. Spotifast uses its session for:
 - **Radio and autoplay** through Spotify's context resolver: stations seeded
   by a song, playlist, album, or artist. Each resolution is a fresh mix of 50
   songs, so a radio page plays the songs it shows rather than asking again.
+  A playlist's radio also supplies its **Recommended songs** and **Smart
+  Shuffle**, which leave out songs the playlist already has.
 - **Audiobook detection** for saved shows, which the Web API lists as podcasts.
 
 ## librespot playback
@@ -97,8 +99,10 @@ The Web API and librespot do not provide these features:
   support its protocol. Spotifast's pins are local and are stored in
   `settings.json`. See [issue #31](https://github.com/crmne/spotifast/issues/31).
 - **Editing playlist folders.** librespot can only read them.
-- **Smart Shuffle, Jam, Blend, and similar Spotify features.** Spotify
-  generates these for its own clients. Spotifast only has plain shuffle.
+- **Jam, Blend, and similar Spotify features.** Spotify generates these for
+  its own clients. Spotifast's own Smart Shuffle and a playlist's
+  Recommended songs are built from the playlist's radio (see above), not
+  from Spotify's Smart Shuffle service.
 - **Lossless audio.** librespot does not receive lossless streams. Spotifast
   will reconsider this if librespot gains lawful support, but it will not
   bypass Spotify's DRM.

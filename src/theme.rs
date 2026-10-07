@@ -549,6 +549,15 @@ pub fn icon_button(
 ///
 /// Lucide includes a 1/24-width shift; a measured 3% shift centers the icon at
 /// Spotifast's sizes. Use this everywhere instead of per-call adjustments.
+/// The small sparkle on a Shuffle button that marks Smart Shuffle, at the
+/// top right of the button's icon of `size`.
+pub fn paint_smart_badge(ui: &egui::Ui, button: egui::Rect, size: f32, color: Color32) {
+    let badge = (size * 0.5).max(8.0);
+    let center = button.center() + Vec2::new(size * 0.55, -size * 0.45);
+    let rect = egui::Rect::from_center_size(center, Vec2::splat(badge));
+    paint_icon(ui, Icon::Sparkles, rect, badge, color);
+}
+
 pub fn play_glyph_offset(icon: Icon, icon_size: f32) -> Vec2 {
     if matches!(icon, Icon::PlayFilled | Icon::Play) {
         Vec2::new(icon_size * (0.03 - 1.0 / 24.0), 0.0)

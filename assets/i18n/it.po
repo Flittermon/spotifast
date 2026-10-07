@@ -3192,3 +3192,39 @@ msgstr "Su Windows on ARM, l’OpenGL con cui Spotifast disegna proviene dall’
 
 #~ msgid "Reduce lyrics motion"
 #~ msgstr "Riduci animazioni del testo"
+
+#: src/ui/collection.rs src/ui/player_bar.rs
+msgid "Smart Shuffle"
+msgstr "Smart Shuffle"
+
+#: src/ui/collection.rs
+msgid "Turn off Smart Shuffle"
+msgstr "Disattiva Smart Shuffle"
+
+#: src/app/recommendations.rs
+msgid "Smart Shuffle on: a recommended song plays after every 3 songs"
+msgstr "Smart Shuffle attivo: ogni 3 brani ne viene riprodotto uno consigliato"
+
+#: src/ui/collection.rs
+msgid "Recommended songs"
+msgstr "Brani consigliati"
+
+#: src/ui/collection.rs
+msgid "Based on what's in this playlist"
+msgstr "In base al contenuto di questa playlist"
+
+#: src/ui/collection.rs
+msgid "Recommendations come from playback on this computer. Turn it on in Settings."
+msgstr "I consigli arrivano dalla riproduzione su questo computer. Attivala nelle Impostazioni."
+
+#: src/ui/collection.rs
+msgid "No new songs to recommend right now."
+msgstr "Al momento non ci sono nuovi brani da consigliare."
+
+#: src/ui/collection.rs
+msgid "Add"
+msgstr "Aggiungi"
+
+#: src/ui/collection.rs
+msgid "Add to this playlist"
+msgstr "Aggiungi a questa playlist"
