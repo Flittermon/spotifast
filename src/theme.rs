@@ -371,13 +371,18 @@ fn apply_to_style(style: &mut egui::Style, palette: &Palette) {
 }
 
 /// Inter at its four weights with the monochrome emoji face right behind it
-/// (so every emoji wears the same style, ahead of egui's own pair), then the
-/// installed faces for the scripts Inter lacks, drawn the way the desktop
-/// renders text.
+/// (so every emoji wears the same style, ahead of egui's own pair), drawn
+/// the way the desktop renders text.
+///
+/// The installed faces for scripts Inter lacks (Chinese, Japanese, Korean,
+/// Arabic, Thai and more) are left out: each is read whole into memory at
+/// start, some 40 MB on Windows, and this build only needs the Latin
+/// script. Names in those scripts show as empty boxes.
 fn install_fonts(ctx: &egui::Context) {
     let emoji = egui::FontData::from_static(include_bytes!("../assets/fonts/NotoEmoji.ttf"));
     let mut fonts = fastframe_fonts::FontSetup::default()
         .companion("noto_emoji", std::sync::Arc::new(emoji))
+        .system_fallbacks(false)
         .definitions();
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
