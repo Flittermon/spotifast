@@ -432,8 +432,9 @@ pub struct App {
     pub show_devices: bool,
     /// The equalizer card at the bottom right is open.
     pub show_eq_panel: bool,
-    /// When Ctrl and the mouse wheel last changed the zoom.
-    zoom_wheel_at: Option<Instant>,
+    /// Wheel notches turned with Ctrl held that have not yet made up a
+    /// whole zoom step, from high-resolution wheels and touchpads.
+    zoom_wheel_notches: f32,
     pub toasts: Vec<Toast>,
     pub actions: Vec<Action>,
     volume_before_mute: Option<u8>,
@@ -881,7 +882,7 @@ impl App {
             lyrics_line_shown: None,
             show_devices: false,
             show_eq_panel: false,
-            zoom_wheel_at: None,
+            zoom_wheel_notches: 0.0,
             toasts: Vec::new(),
             actions: Vec::new(),
             volume_before_mute: None,
@@ -3053,20 +3054,55 @@ impl App {
         }
     }
 
-    /// Ctrl and the mouse wheel zoom the interface in steps of ten per cent,
-    /// like Ctrl+plus and Ctrl+minus. A touchpad sends many small zoom
-    /// events for one gesture; a short gap between steps keeps it usable.
+    /// Ctrl and the mouse wheel zoom the interface ten per cent per notch,
+    /// like Ctrl+plus and Ctrl+minus.
+    ///
+    /// The notches are counted from the raw wheel events. egui's own
+    /// `zoom_delta` follows its smoothed wheel, which spreads one notch
+    /// over a tenth of a second or more of frames, so reading it counted
+    /// a single notch more than once. A pinch on a touchpad counts a
+    /// notch for every ten per cent it zooms.
     fn wheel_zoom(&mut self, ctx: &egui::Context) {
-        const STEP_GAP: Duration = Duration::from_millis(80);
-        let delta = ctx.input(|input| input.zoom_delta());
-        if (delta - 1.0).abs() < 0.001
-            || self.zoom_wheel_at.is_some_and(|at| at.elapsed() < STEP_GAP)
-        {
+        /// Points a wheel reporting in points moves per notch.
+        const POINTS_PER_NOTCH: f32 = 50.0;
+        let notches: f32 = ctx.input(|input| {
+            input
+                .raw
+                .events
+                .iter()
+                .map(|event| match event {
+                    egui::Event::MouseWheel {
+                        unit,
+                        delta,
+                        modifiers,
+                        ..
+                    } if modifiers.command => {
+                        let delta = delta.x + delta.y;
+                        match unit {
+                            egui::MouseWheelUnit::Point => delta / POINTS_PER_NOTCH,
+                            egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => delta,
+                        }
+                    }
+                    egui::Event::Zoom(factor) if *factor > 0.0 => factor.ln() / 1.1f32.ln(),
+                    _ => 0.0,
+                })
+                .sum()
+        });
+        if notches == 0.0 {
             return;
         }
-        self.zoom_wheel_at = Some(Instant::now());
-        let step = if delta > 1.0 { 0.1 } else { -0.1 };
-        let zoom = ((ctx.zoom_factor() + step) * 10.0).round() / 10.0;
+        // Turning the other way starts afresh rather than first paying off
+        // a part notch left over from before.
+        if notches.signum() != self.zoom_wheel_notches.signum() {
+            self.zoom_wheel_notches = 0.0;
+        }
+        self.zoom_wheel_notches += notches;
+        let steps = self.zoom_wheel_notches.trunc();
+        if steps == 0.0 {
+            return;
+        }
+        self.zoom_wheel_notches -= steps;
+        let zoom = ((ctx.zoom_factor() + 0.1 * steps) * 10.0).round() / 10.0;
         ctx.set_zoom_factor(zoom.clamp(0.5, 2.5));
     }
 
@@ -23660,38 +23696,80 @@ mod tests {
         assert!(!app.show_eq_panel);
     }
 
-    /// Ctrl and the mouse wheel zoom in and out by ten per cent at a time,
+    fn ctrl_wheel(lines: f32) -> egui::Event {
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, lines),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::COMMAND,
+        }
+    }
+
+    /// Runs a pass with `events`, then one more so a new zoom factor has
+    /// taken effect, and reports it.
+    fn zoom_frame(ctx: &egui::Context, app: &mut App, events: Vec<egui::Event>) -> f32 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| app.wheel_zoom(ui.ctx()),
+        );
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.wheel_zoom(ui.ctx()));
+        output.textures_delta.clear();
+        ctx.zoom_factor()
+    }
+
+    /// Ctrl and the mouse wheel zoom in and out by ten per cent a notch,
     /// within the same limits as the keyboard and Settings.
     #[test]
     fn ctrl_and_the_mouse_wheel_zoom_the_interface() {
         let ctx = egui::Context::default();
         let mut app = headless_app();
-        let mut frame = |app: &mut App, events: Vec<egui::Event>| {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    events,
-                    ..Default::default()
-                },
-                |ui| app.wheel_zoom(ui.ctx()),
-            );
-            output.textures_delta.clear();
-            // A new zoom factor takes effect from the next pass.
-            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
-            output.textures_delta.clear();
-            app.zoom_wheel_at = None;
-            ctx.zoom_factor()
+        let near = |a: f32, b: f32| (a - b).abs() < 0.001;
+        assert!(near(zoom_frame(&ctx, &mut app, Vec::new()), 1.0));
+        assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(1.0)]), 1.1));
+        assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(1.0)]), 1.2));
+        assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(-1.0)]), 1.1));
+        // Without Ctrl the wheel scrolls and leaves the zoom alone.
+        let plain = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
         };
-        assert!((frame(&mut app, Vec::new()) - 1.0).abs() < 0.001);
-        assert!((frame(&mut app, vec![egui::Event::Zoom(1.3)]) - 1.1).abs() < 0.001);
-        assert!((frame(&mut app, vec![egui::Event::Zoom(1.01)]) - 1.2).abs() < 0.001);
-        assert!((frame(&mut app, vec![egui::Event::Zoom(0.8)]) - 1.1).abs() < 0.001);
+        assert!(near(zoom_frame(&ctx, &mut app, vec![plain]), 1.1));
         for _ in 0..20 {
-            frame(&mut app, vec![egui::Event::Zoom(0.8)]);
+            zoom_frame(&ctx, &mut app, vec![ctrl_wheel(-1.0)]);
         }
-        assert!((ctx.zoom_factor() - 0.5).abs() < 0.001, "no smaller than 50%");
+        assert!(near(ctx.zoom_factor(), 0.5), "no smaller than 50%");
         for _ in 0..30 {
-            frame(&mut app, vec![egui::Event::Zoom(1.3)]);
+            zoom_frame(&ctx, &mut app, vec![ctrl_wheel(1.0)]);
         }
-        assert!((ctx.zoom_factor() - 2.5).abs() < 0.001, "no larger than 250%");
+        assert!(near(ctx.zoom_factor(), 2.5), "no larger than 250%");
+    }
+
+    /// One notch is one step, however many frames egui's smoothed wheel
+    /// takes to play it out (it used to count twice), and a fine wheel's
+    /// part notches add up to whole ones.
+    #[test]
+    fn one_wheel_notch_zooms_one_step() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let near = |a: f32, b: f32| (a - b).abs() < 0.001;
+        zoom_frame(&ctx, &mut app, vec![ctrl_wheel(1.0)]);
+        for _ in 0..30 {
+            zoom_frame(&ctx, &mut app, Vec::new());
+        }
+        assert!(near(ctx.zoom_factor(), 1.1), "{}", ctx.zoom_factor());
+        assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(0.5)]), 1.1));
+        assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(0.5)]), 1.2));
+        assert!(near(
+            zoom_frame(&ctx, &mut app, vec![ctrl_wheel(1.0), ctrl_wheel(1.0)]),
+            1.4
+        ));
+        // A touchpad pinch zooms a step for every ten per cent.
+        assert!(near(zoom_frame(&ctx, &mut app, vec![egui::Event::Zoom(1.12)]), 1.5));
     }
 }
