@@ -101,11 +101,13 @@ pub(crate) fn candidates(recommendations: &Recommendations) -> Vec<&Track> {
         .iter()
         .filter(|track| track.uri.starts_with("spotify:track:"))
         .filter(|track| track.is_playable != Some(false))
+        // Each song once, before leaving out the playlist's: another
+        // release of a song just added must not take its place.
+        .filter(|track| seen.insert(track_title_key(track)))
         .filter(|track| {
             !recommendations.members.contains(&track.uri)
                 && !recommendations.members.contains(&track_title_key(track))
         })
-        .filter(|track| seen.insert(track_title_key(track)))
         .collect()
 }
 
@@ -342,10 +344,11 @@ impl App {
             return;
         }
         self.smart_shuffle.since_last = self.smart_shuffle.since_last.saturating_add(1);
-        // A queued recommendation that never started, because it was
-        // skipped past or the queue was cleared, stops holding up the next.
+        // A queued recommendation should play right after the song that
+        // queued it. One still waiting after as many songs again was
+        // skipped past or cleared, and stops holding up the next.
         if !self.smart_shuffle.pending.is_empty()
-            && self.smart_shuffle.since_last >= 2 * SMART_SHUFFLE_EVERY
+            && self.smart_shuffle.since_last >= SMART_SHUFFLE_EVERY
         {
             self.smart_shuffle.pending.clear();
         }
@@ -405,6 +408,9 @@ impl App {
         }
         self.smart_shuffle.pending.push(track.uri.clone());
         self.smart_shuffle.added.insert(track.uri.clone());
+        // Count from here, so a recommendation that never starts is
+        // noticed after another round of the playlist's songs.
+        self.smart_shuffle.since_last = 0;
         self.queue_one(track.uri.clone(), track.name.clone(), false);
     }
 }

@@ -1507,9 +1507,10 @@ pub fn playlist(app: &mut App, ui: &mut egui::Ui, id: &str) {
                     items_revision: page.items.revision,
                 },
             );
-            // Like Spotify, songs to add sit under playlists one can add to.
-            if can_edit && page.items.loaded_once && page.filter.trim().is_empty() {
-                recommended_songs(app, ui, playlist, &page);
+            // Songs that go with the playlist: added to it when it can be
+            // edited, queued when it belongs to someone else.
+            if page.items.loaded_once && page.filter.trim().is_empty() {
+                recommended_songs(app, ui, playlist, &page, can_edit);
             }
         }
         Loadable::Loading | Loadable::NotLoaded => {
@@ -1538,7 +1539,13 @@ pub fn playlist(app: &mut App, ui: &mut egui::Ui, id: &str) {
 /// "Recommended songs" under a playlist: songs from the playlist's radio
 /// that it does not have yet, each with an Add button, and Refresh for
 /// others.
-fn recommended_songs(app: &mut App, ui: &mut egui::Ui, playlist: &Playlist, page: &PlaylistPage) {
+fn recommended_songs(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    playlist: &Playlist,
+    page: &PlaylistPage,
+    can_edit: bool,
+) {
     let palette = app.palette;
     let locale = app.locale;
     let songs = app.recommended_songs(&playlist.uri, page);
@@ -1596,8 +1603,23 @@ fn recommended_songs(app: &mut App, ui: &mut egui::Ui, playlist: &Playlist, page
                 .collect::<Vec<_>>()
                 .into();
             let context = RowContext::Uris(Arc::clone(&uris));
-            let add_label = gettext(locale, "Add");
-            let add_width = 84.0;
+            let (add_label, add_hint) = if can_edit {
+                (gettext(locale, "Add"), gettext(locale, "Add to this playlist"))
+            } else {
+                (gettext(locale, "Add to queue"), gettext(locale, "Add to queue"))
+            };
+            // The pill's own width (label plus padding) and a gap before it.
+            let add_width = ui
+                .painter()
+                .layout_no_wrap(
+                    add_label.to_string(),
+                    theme::semibold(13.0),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x
+                + 36.0
+                + 12.0;
             for (index, track) in songs.iter().enumerate() {
                 let item = PlayableItem::Track(track.clone());
                 ui.horizontal(|ui| {
@@ -1634,15 +1656,20 @@ fn recommended_songs(app: &mut App, ui: &mut egui::Ui, playlist: &Playlist, page
                         Layout::right_to_left(Align::Center),
                         |ui| {
                             if theme::pill_button(ui, &palette, &add_label, false)
-                                .on_hover_text(
-                                    gettext(locale, "Add to this playlist").as_ref(),
-                                )
+                                .on_hover_text(add_hint.as_ref())
                                 .clicked()
                             {
-                                app.actions.push(Action::AddToPlaylist {
-                                    playlist_id: playlist.id.clone(),
-                                    playlist_name: playlist.name.clone(),
-                                    items: vec![item.clone()],
+                                app.actions.push(if can_edit {
+                                    Action::AddToPlaylist {
+                                        playlist_id: playlist.id.clone(),
+                                        playlist_name: playlist.name.clone(),
+                                        items: vec![item.clone()],
+                                    }
+                                } else {
+                                    Action::AddToQueue {
+                                        uri: track.uri.clone(),
+                                        label: track.name.clone(),
+                                    }
                                 });
                             }
                         },
@@ -2433,6 +2460,121 @@ mod tests {
             )),
             "Add puts the song in the playlist"
         );
+        app.backend.shutdown();
+    }
+
+    /// Someone else's playlist lists recommendations too; as they cannot
+    /// be added to it, its button queues the song instead.
+    #[test]
+    fn another_users_playlist_offers_recommendations_to_queue() {
+        fn texts(shape: &egui::Shape, found: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Text(text) => found.push((
+                    text.galley.text().to_string(),
+                    text.pos + text.galley.rect.center().to_vec2(),
+                )),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        texts(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let song = |id: &str| Track {
+            id: Some(id.into()),
+            uri: format!("spotify:track:{id}"),
+            name: format!("Song {id}"),
+            duration_ms: 200_000,
+            artists: vec![ArtistRef {
+                name: format!("Artist {id}"),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut app = test_app();
+        app.backend.set_offline(true);
+        app.playlist_pages.insert(
+            "theirs".into(),
+            PlaylistPage {
+                playlist: Loadable::Loaded(Playlist {
+                    id: "theirs".into(),
+                    name: "Journal".into(),
+                    uri: "spotify:playlist:theirs".into(),
+                    tracks: Some(crate::api::models::TrackCount { total: 1 }),
+                    ..Default::default()
+                }),
+                items: PagedList {
+                    items: vec![crate::api::models::PlaylistItem {
+                        item: Some(PlayableItem::Track(song("in"))),
+                        ..Default::default()
+                    }],
+                    total: Some(1),
+                    loaded_once: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut draw = |app: &mut App, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1000.0, 2400.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| playlist(app, ui, "theirs"));
+                },
+            );
+            output.textures_delta.clear();
+            let mut found = Vec::new();
+            for shape in &output.shapes {
+                texts(&shape.shape, &mut found);
+            }
+            found
+        };
+        draw(&mut app, Vec::new());
+        let uri = "spotify:playlist:theirs";
+        let generation = app.recommendations[uri].generation;
+        app.receive_recommendations(uri, generation, &Ok(vec![song("in"), song("new")]));
+        draw(&mut app, Vec::new());
+        let shown = draw(&mut app, Vec::new());
+        assert!(shown.iter().all(|(text, _)| text != "Add"));
+        let queue: Vec<egui::Pos2> = shown
+            .iter()
+            .filter(|(text, _)| text == "Add to queue")
+            .map(|(_, pos)| *pos)
+            .collect();
+        assert_eq!(queue.len(), 1);
+        let pos = queue[0];
+        draw(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(app.actions.iter().any(|action| matches!(
+            action,
+            Action::AddToQueue { uri, .. } if uri == "spotify:track:new"
+        )));
         app.backend.shutdown();
     }
 

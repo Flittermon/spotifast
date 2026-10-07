@@ -819,7 +819,8 @@ pub struct Recommendations {
 pub struct SmartShuffle {
     /// The playlist the count belongs to.
     pub playlist: Option<String>,
-    /// Songs from the playlist started since the last recommendation.
+    /// Songs from the playlist started since the last recommendation was
+    /// queued or played.
     pub since_last: u32,
     /// Recommendations queued that have not started yet.
     pub pending: Vec<String>,

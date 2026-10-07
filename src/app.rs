@@ -21047,6 +21047,9 @@ mod tests {
         assert_ne!(playing_context, other_collection);
         app.open(Page::Playlist("pl0".into()));
 
+        // On a playlist, Shuffle goes on to Smart Shuffle before off.
+        click_collection_action(&ctx, &mut app, other_collection, egui::pos2(87.0, 28.0));
+        assert!(app.smart_shuffle_on());
         click_collection_action(&ctx, &mut app, other_collection, egui::pos2(87.0, 28.0));
         assert!(!app.playing_context_shuffle());
         assert_eq!(
@@ -23414,7 +23417,7 @@ mod tests {
         }
         assert_eq!(app.smart_shuffle.pending, vec!["spotify:track:r1".to_string()]);
         app.manual_queue.clear();
-        for song in ["p4", "p5", "p6", "p7", "p8", "p9"] {
+        for song in ["p4", "p5", "p6"] {
             start_song(&mut app, &format!("spotify:track:{song}"));
         }
         assert_eq!(app.smart_shuffle.pending, vec!["spotify:track:r2".to_string()]);
