@@ -23,8 +23,8 @@ use protobuf::{EnumOrUnknown, Message as _};
 
 use crate::api::ApiError;
 use crate::api::models::{
-    Album, ArtistRef, Episode, Image, Owner, Page, PlayableItem, Playlist, PlaylistItem, Show,
-    Track, TrackCount, UserRef,
+    Album, Artist, ArtistRef, Episode, Image, Owner, Page, PlayableItem, Playlist, PlaylistItem,
+    Show, Track, TrackCount, UserRef,
 };
 
 const IMAGE_HOST: &str = "https://i.scdn.co/image/";
@@ -172,6 +172,117 @@ pub async fn station(session: &Session, station: &str) -> anyhow::Result<Vec<Tra
             _ => None,
         })
         .collect())
+}
+
+/// How many songs an artist page lists as popular, as the Web API answers.
+const TOP_TRACKS: usize = 10;
+/// How many related artists an artist page shows, as the Web API answers.
+const RELATED_ARTISTS: usize = 20;
+/// How many songs the Home recommendations shelf asks for.
+pub const RECOMMENDATIONS: usize = 20;
+
+/// The artist's metadata, which carries its popular songs per country and
+/// the artists Spotify relates to it.
+async fn session_artist(session: &Session, id: &str) -> Result<SessionArtist, Failure> {
+    use librespot_metadata::Metadata as _;
+    let uri = SpotifyUri::from_uri(&format!("spotify:artist:{id}"))
+        .map_err(|_| Failure::Retry(anyhow::anyhow!("not an artist id: {id}")))?;
+    SessionArtist::get(session, &uri).await.map_err(refused)
+}
+
+/// An artist's most played songs, as the Web API's top tracks answer them:
+/// the list for the account's country, or else the first Spotify keeps.
+/// No list at all leaves the read to the Web API rather than show none.
+pub async fn artist_top_tracks(session: &Session, id: &str) -> Result<Vec<Track>, Failure> {
+    let artist = session_artist(session, id).await?;
+    let country = session.country();
+    let list = artist
+        .top_tracks
+        .iter()
+        .find(|top| top.country == country && !top.tracks.is_empty())
+        .or_else(|| artist.top_tracks.iter().find(|top| !top.tracks.is_empty()))
+        .ok_or_else(|| Failure::Retry(anyhow::anyhow!("no top tracks for artist {id}")))?;
+    let uris: Vec<&SpotifyUri> = list.tracks.iter().take(TOP_TRACKS).collect();
+    let found = metadata(session, uris.iter().copied()).await?;
+    Ok(uris
+        .iter()
+        .filter_map(|uri| uri.to_uri().ok())
+        .filter_map(|uri| match found.get(&uri) {
+            Some(PlayableItem::Track(track)) => Some(track.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The artists Spotify relates to an artist, as the Web API answers them.
+/// The related entries often carry only a name, so the portraits of those
+/// without one are read alongside, all at once. None at all leaves the
+/// read to the Web API.
+pub async fn related_artists(session: &Session, id: &str) -> Result<Vec<Artist>, Failure> {
+    use librespot_metadata::Metadata as _;
+    let artist = session_artist(session, id).await?;
+    if artist.related.is_empty() {
+        return Err(Failure::Retry(anyhow::anyhow!(
+            "no related artists for artist {id}"
+        )));
+    }
+    let entries: Vec<&SessionArtist> = artist.related.iter().take(RELATED_ARTISTS).collect();
+    let mut related: Vec<Artist> = entries.iter().map(|entry| web_artist(entry)).collect();
+    let mut portraits = tokio::task::JoinSet::new();
+    for (index, entry) in entries.iter().enumerate() {
+        if related[index].images.is_empty() {
+            let session = session.clone();
+            let uri = entry.id.clone();
+            portraits.spawn(async move { (index, SessionArtist::get(&session, &uri).await) });
+        }
+    }
+    while let Some(joined) = portraits.join_next().await {
+        if let Ok((index, Ok(full))) = joined {
+            related[index].images = portrait(&full);
+        }
+    }
+    Ok(related)
+}
+
+/// Songs that go with the seed songs, as the Web API's recommendations
+/// answer them: the first seed's radio without the seeds themselves.
+pub async fn recommendations(
+    session: &Session,
+    seed_tracks: &[String],
+) -> Result<Vec<Track>, Failure> {
+    let seed = seed_tracks
+        .first()
+        .ok_or_else(|| Failure::Retry(anyhow::anyhow!("no seed song")))?;
+    let songs = station(session, &format!("spotify:station:track:{seed}"))
+        .await
+        .map_err(Failure::Retry)?;
+    Ok(songs
+        .into_iter()
+        .filter(|track| track.id.as_ref().is_none_or(|id| !seed_tracks.contains(id)))
+        .take(RECOMMENDATIONS)
+        .collect())
+}
+
+/// An artist as the Web API describes one.
+fn web_artist(artist: &SessionArtist) -> Artist {
+    Artist {
+        id: artist.id.to_id().unwrap_or_default(),
+        uri: artist.id.to_uri().unwrap_or_default(),
+        name: artist.name.clone(),
+        images: portrait(artist),
+        popularity: Some(artist.popularity.clamp(0, 100) as u8),
+        ..Default::default()
+    }
+}
+
+/// An artist's picture: its portraits, or else its portrait group.
+fn portrait(artist: &SessionArtist) -> Vec<Image> {
+    let portraits = images(&artist.portraits);
+    if portraits.is_empty() {
+        images(&artist.portrait_group)
+    } else {
+        portraits
+    }
 }
 
 /// Each song of a resolved station once, named by URI or by raw id.

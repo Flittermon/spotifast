@@ -96,16 +96,23 @@ pub enum Operation {
     PlaylistItems(PlaylistAccess),
     PlaylistMutation(PlaylistAccess),
     UnsupportedDevelopmentMode,
+    /// Catalogue reads a personal app may not make that the streaming
+    /// session can: an artist's popular songs and related artists, and
+    /// recommendations. Only the shared app could answer them otherwise.
+    SessionCatalog,
 }
 
 /// The streaming session reads every playlist the shared app would have
 /// been asked for: other people's, which no personal app may read, and the
 /// account's own when it has no personal app. A personal app keeps its own
-/// playlists, which it reads quickly and with every field.
+/// playlists, which it reads quickly and with every field. The session
+/// also reads the catalogue that only the shared app could: its quota is
+/// divided among everyone using it and often runs out, while the session
+/// has none.
 fn session_serves(operation: Operation, personal_ready: bool) -> bool {
     matches!(
         operation,
-        Operation::PlaylistMetadata(_) | Operation::PlaylistItems(_)
+        Operation::PlaylistMetadata(_) | Operation::PlaylistItems(_) | Operation::SessionCatalog
     ) && plan(operation, personal_ready) == ApiSource::Shared
 }
 
@@ -114,9 +121,8 @@ fn session_serves(operation: Operation, personal_ready: bool) -> bool {
 fn plan(operation: Operation, personal_ready: bool) -> ApiSource {
     use Operation::*;
     match operation {
-        CanonicalAccount | PlaylistLibrary | PlaylistSearch | UnsupportedDevelopmentMode => {
-            ApiSource::Shared
-        }
+        CanonicalAccount | PlaylistLibrary | PlaylistSearch | UnsupportedDevelopmentMode
+        | SessionCatalog => ApiSource::Shared,
         PlaylistMetadata(PlaylistAccess::External | PlaylistAccess::Unknown)
         | PlaylistItems(PlaylistAccess::External | PlaylistAccess::Unknown)
         | PlaylistMutation(PlaylistAccess::External | PlaylistAccess::Unknown) => ApiSource::Shared,
@@ -427,6 +433,8 @@ mod tests {
                 Operation::PlaylistItems(PlaylistAccess::Collaborative),
                 false,
             ),
+            (Operation::SessionCatalog, false),
+            (Operation::SessionCatalog, true),
         ] {
             assert!(session_serves(operation, personal), "{operation:?}");
         }
@@ -465,6 +473,7 @@ mod tests {
             Operation::PlaylistLibrary,
             Operation::PlaylistSearch,
             Operation::UnsupportedDevelopmentMode,
+            Operation::SessionCatalog,
             Operation::PlaylistMetadata(PlaylistAccess::External),
             Operation::PlaylistMetadata(PlaylistAccess::Unknown),
             Operation::PlaylistItems(PlaylistAccess::External),

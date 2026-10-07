@@ -71,6 +71,12 @@ clients. Spotifast uses its session for:
   songs, so a radio page plays the songs it shows rather than asking again.
   A playlist's radio also supplies its **Recommended songs** and **Smart
   Shuffle**, which leave out songs the playlist already has.
+- **Artist pages and Home recommendations:** an artist's popular songs and
+  related artists, and the Recommended for you shelf (from the radio of your
+  top songs). Apps created since November 2024 cannot ask the Web API for
+  these, so only the shared app could, and its divided quota often runs
+  out. The session has no such quota; the shared app answers only when the
+  session cannot.
 - **Audiobook detection** for saved shows, which the Web API lists as podcasts.
 
 ## librespot playback

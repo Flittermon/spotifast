@@ -3381,7 +3381,7 @@ fn operation_for(api: &ApiGateway, request: &ApiRequest) -> Operation {
         }
         ApiRequest::Recommendations { .. }
         | ApiRequest::ArtistTopTracks { .. }
-        | ApiRequest::RelatedArtists { .. } => Operation::UnsupportedDevelopmentMode,
+        | ApiRequest::RelatedArtists { .. } => Operation::SessionCatalog,
         ApiRequest::Artist { .. }
         | ApiRequest::ArtistAlbums { .. }
         | ApiRequest::Album { .. }
@@ -3902,6 +3902,15 @@ async fn over_session(engine: &Engine, request: &ApiRequest) -> Option<ApiRespon
             SessionRead::Sample { id, offset } => SessionAnswer::Rows(settle(
                 session_reads::sample(session, id, offset, PLAYLIST_PAGE_SIZE).await,
             )?),
+            SessionRead::TopTracks { id } => SessionAnswer::Tracks(settle(
+                session_reads::artist_top_tracks(session, id).await,
+            )?),
+            SessionRead::Related { id } => SessionAnswer::Artists(settle(
+                session_reads::related_artists(session, id).await,
+            )?),
+            SessionRead::Recommendations { seed_tracks } => SessionAnswer::Tracks(settle(
+                session_reads::recommendations(session, seed_tracks).await,
+            )?),
         })
     };
     let Ok(answer) = tokio::time::timeout(SESSION_READ_TIMEOUT, read).await else {
@@ -3920,6 +3929,12 @@ enum SessionRead<'a> {
     Header { id: &'a str },
     Rows { id: &'a str, offset: u32 },
     Sample { id: &'a str, offset: u32 },
+    /// An artist's popular songs.
+    TopTracks { id: &'a str },
+    /// The artists related to an artist.
+    Related { id: &'a str },
+    /// Songs that go with the seed songs; artist seeds stay the Web API's.
+    Recommendations { seed_tracks: &'a [String] },
 }
 
 fn session_read(request: &ApiRequest) -> Option<SessionRead<'_>> {
@@ -3933,6 +3948,11 @@ fn session_read(request: &ApiRequest) -> Option<SessionRead<'_>> {
             id,
             offset: *offset,
         },
+        ApiRequest::ArtistTopTracks { id } => SessionRead::TopTracks { id },
+        ApiRequest::RelatedArtists { id } => SessionRead::Related { id },
+        ApiRequest::Recommendations { seed_tracks, .. } if !seed_tracks.is_empty() => {
+            SessionRead::Recommendations { seed_tracks }
+        }
         _ => return None,
     })
 }
@@ -3941,6 +3961,8 @@ fn session_read(request: &ApiRequest) -> Option<SessionRead<'_>> {
 enum SessionAnswer {
     Header(ApiResult<Playlist>),
     Rows(ApiResult<Page<PlaylistItem>>),
+    Tracks(ApiResult<Vec<Track>>),
+    Artists(ApiResult<Vec<Artist>>),
 }
 
 /// The response a session answer becomes, carrying the request's own id,
@@ -3970,6 +3992,24 @@ fn session_response(request: &ApiRequest, answer: SessionAnswer) -> Option<ApiRe
         (ApiRequest::PlaylistSample { id, generation, .. }, SessionAnswer::Rows(result)) => {
             ApiResponse::PlaylistSample {
                 id: id.clone(),
+                generation: *generation,
+                result,
+            }
+        }
+        (ApiRequest::ArtistTopTracks { id }, SessionAnswer::Tracks(result)) => {
+            ApiResponse::ArtistTopTracks {
+                id: id.clone(),
+                result,
+            }
+        }
+        (ApiRequest::RelatedArtists { id }, SessionAnswer::Artists(result)) => {
+            ApiResponse::RelatedArtists {
+                id: id.clone(),
+                result,
+            }
+        }
+        (ApiRequest::Recommendations { generation, .. }, SessionAnswer::Tracks(result)) => {
+            ApiResponse::Recommendations {
                 generation: *generation,
                 result,
             }
@@ -6090,6 +6130,59 @@ mod session_tests {
         };
         assert_eq!(session_read(&duplicates), None);
         assert_eq!(session_read(&ApiRequest::Me), None);
+    }
+
+    /// An artist's popular songs and related artists, and recommendations
+    /// seeded by songs, are read over the session, so they never wait on
+    /// the shared app's quota; recommendations seeded only by artists stay
+    /// the Web API's. Their answers reach the app as the Web API's would.
+    #[test]
+    fn the_session_reads_artists_and_recommendations() {
+        let top = ApiRequest::ArtistTopTracks { id: "a1".into() };
+        assert_eq!(session_read(&top), Some(SessionRead::TopTracks { id: "a1" }));
+        let related = ApiRequest::RelatedArtists { id: "a1".into() };
+        assert_eq!(session_read(&related), Some(SessionRead::Related { id: "a1" }));
+        let seeds = vec!["t1".to_string(), "t2".to_string()];
+        let by_songs = ApiRequest::Recommendations {
+            seed_tracks: seeds.clone(),
+            seed_artists: Vec::new(),
+            generation: 4,
+        };
+        assert_eq!(
+            session_read(&by_songs),
+            Some(SessionRead::Recommendations {
+                seed_tracks: &seeds
+            })
+        );
+        let by_artists = ApiRequest::Recommendations {
+            seed_tracks: Vec::new(),
+            seed_artists: vec!["a1".into()],
+            generation: 4,
+        };
+        assert_eq!(session_read(&by_artists), None);
+
+        let song = Track {
+            id: Some("s1".into()),
+            uri: "spotify:track:s1".into(),
+            ..Default::default()
+        };
+        assert!(matches!(
+            session_response(&top, SessionAnswer::Tracks(Ok(vec![song.clone()]))),
+            Some(ApiResponse::ArtistTopTracks { id, result: Ok(songs) })
+                if id == "a1" && songs.len() == 1
+        ));
+        assert!(matches!(
+            session_response(&related, SessionAnswer::Artists(Ok(Vec::new()))),
+            Some(ApiResponse::RelatedArtists { id, result: Ok(_) }) if id == "a1"
+        ));
+        assert!(matches!(
+            session_response(&by_songs, SessionAnswer::Tracks(Ok(vec![song]))),
+            Some(ApiResponse::Recommendations { generation: 4, result: Ok(_) })
+        ));
+        assert!(
+            session_response(&top, SessionAnswer::Artists(Ok(Vec::new()))).is_none(),
+            "an answer of the wrong kind is not passed off as the request's"
+        );
     }
 
     /// A session answer reaches the app as the Web API's would: a value, a
