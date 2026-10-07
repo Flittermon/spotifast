@@ -29,17 +29,15 @@ pub struct Line {
     pub ink_height: u32,
 }
 
-/// Font fallback order: Arial or a system equivalent, Inter, emoji, then
-/// system script fallbacks. This mirrors Windows font linking.
+/// Font fallback order: Arial or a system equivalent, Inter, then emoji.
+/// The system's faces for other scripts are left out, as in the main
+/// window (see `theme::install_fonts`): they cost tens of megabytes.
 static FACES: LazyLock<Vec<(&'static [u8], u32)>> = LazyLock::new(|| {
     let mut faces: Vec<(&'static [u8], u32)> = match crate::system_fonts::pledit_face() {
         Some(face) => vec![(&face.bytes, face.index)],
         None => vec![(fastframe_fonts::INTER, 0)],
     };
     faces.push((include_bytes!("../../../assets/fonts/NotoEmoji.ttf"), 0));
-    for fallback in fastframe_fonts::system::fallbacks() {
-        faces.push((&fallback.bytes, fallback.index));
-    }
     faces
 });
 
