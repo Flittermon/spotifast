@@ -941,6 +941,27 @@ fn extras(app: &mut App, ui: &mut egui::Ui, now: Option<&NowPlaying>) {
     {
         app.actions.push(Action::ToggleLyricsPanel);
     }
+    let eq_button = theme::icon_button(
+        ui,
+        Icon::SlidersVertical,
+        18.0,
+        if app.show_eq_panel || app.settings.eq_on {
+            palette.accent
+        } else {
+            palette.secondary
+        },
+        palette.text,
+        &gettext(app.locale, "Equalizer"),
+    );
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new(super::eq_panel::BUTTON_RECT_ID),
+            eq_button.rect,
+        )
+    });
+    if eq_button.clicked() {
+        app.actions.push(Action::ToggleEqPanel);
+    }
 }
 
 #[cfg(test)]

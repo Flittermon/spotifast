@@ -1979,7 +1979,7 @@ fn language_picker(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-fn hertz(hz: f32) -> String {
+pub(crate) fn hertz(hz: f32) -> String {
     if hz >= 1000.0 {
         format!("{}K", (hz / 1000.0).round() as u32)
     } else {
@@ -1990,7 +1990,13 @@ fn hertz(hz: f32) -> String {
 /// One vertical slider in the app's own style: the track filled from
 /// 0 dB, the handle in the middle when flat, a double-click to put it
 /// back there. Returns whether it moved.
-fn eq_slider(ui: &mut egui::Ui, palette: &Palette, label: &str, value: &mut f32, on: bool) -> bool {
+pub(crate) fn eq_slider(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    label: &str,
+    value: &mut f32,
+    on: bool,
+) -> bool {
     use egui::{Rect, Stroke, pos2, vec2};
     let range = crate::eq::RANGE_DB;
     ui.vertical(|ui| {
@@ -2047,7 +2053,7 @@ fn eq_slider(ui: &mut egui::Ui, palette: &Palette, label: &str, value: &mut f32,
 
 /// The equalizer's response over the audible range, the bands marked on
 /// it: the shape says what a row of numbers cannot.
-fn eq_curve(ui: &mut egui::Ui, palette: &Palette, settings: &crate::eq::EqSettings) {
+pub(crate) fn eq_curve(ui: &mut egui::Ui, palette: &Palette, settings: &crate::eq::EqSettings) {
     use egui::{Shape, Stroke, pos2, vec2};
     let width = ui.available_width().min(720.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, 120.0), egui::Sense::hover());

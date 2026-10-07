@@ -430,6 +430,10 @@ pub struct App {
     /// positioned itself at all for this track.
     pub lyrics_line_shown: Option<Option<usize>>,
     pub show_devices: bool,
+    /// The equalizer card at the bottom right is open.
+    pub show_eq_panel: bool,
+    /// When Ctrl and the mouse wheel last changed the zoom.
+    zoom_wheel_at: Option<Instant>,
     pub toasts: Vec<Toast>,
     pub actions: Vec<Action>,
     volume_before_mute: Option<u8>,
@@ -876,6 +880,8 @@ impl App {
             lyrics_following: true,
             lyrics_line_shown: None,
             show_devices: false,
+            show_eq_panel: false,
+            zoom_wheel_at: None,
             toasts: Vec::new(),
             actions: Vec::new(),
             volume_before_mute: None,
@@ -2752,6 +2758,7 @@ impl App {
                 ctx.request_repaint();
             }
         }
+        self.wheel_zoom(ctx);
         if !self.zoom_applied {
             self.zoom_applied = true;
             let zoom = self.settings.zoom.clamp(0.5, 2.5);
@@ -3044,6 +3051,23 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Ctrl and the mouse wheel zoom the interface in steps of ten per cent,
+    /// like Ctrl+plus and Ctrl+minus. A touchpad sends many small zoom
+    /// events for one gesture; a short gap between steps keeps it usable.
+    fn wheel_zoom(&mut self, ctx: &egui::Context) {
+        const STEP_GAP: Duration = Duration::from_millis(80);
+        let delta = ctx.input(|input| input.zoom_delta());
+        if (delta - 1.0).abs() < 0.001
+            || self.zoom_wheel_at.is_some_and(|at| at.elapsed() < STEP_GAP)
+        {
+            return;
+        }
+        self.zoom_wheel_at = Some(Instant::now());
+        let step = if delta > 1.0 { 0.1 } else { -0.1 };
+        let zoom = ((ctx.zoom_factor() + step) * 10.0).round() / 10.0;
+        ctx.set_zoom_factor(zoom.clamp(0.5, 2.5));
     }
 
     /// Sends equalizer settings to the player and marks them for saving.
@@ -9015,6 +9039,7 @@ impl App {
             }
             Action::PauseLyricsFollow => self.lyrics_following = false,
             Action::RetryLyrics => self.request_lyrics(),
+            Action::ToggleEqPanel => self.show_eq_panel = !self.show_eq_panel,
             Action::ToggleDevicesPopup => {
                 self.show_devices = !self.show_devices;
                 if self.show_devices {
@@ -23534,5 +23559,139 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let restored: Settings = serde_json::from_str(&json).unwrap();
         assert!(restored.smart_shuffle);
+    }
+
+
+    // The equalizer card and Ctrl+wheel zoom.
+
+    fn shape_texts(shape: &egui::Shape, found: &mut Vec<(String, egui::Pos2)>) {
+        match shape {
+            egui::Shape::Text(text) => found.push((
+                text.galley.text().to_string(),
+                text.pos + text.galley.rect.center().to_vec2(),
+            )),
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    shape_texts(shape, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_eq_panel(
+        ctx: &egui::Context,
+        app: &mut App,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, egui::Pos2)> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| crate::ui::eq_panel::popup(app, ui.ctx()),
+        );
+        output.textures_delta.clear();
+        let mut found = Vec::new();
+        for shape in &output.shapes {
+            shape_texts(&shape.shape, &mut found);
+        }
+        found
+    }
+
+    /// The player bar's equalizer button opens a card at the bottom right
+    /// with the preamp and the ten bands; moving a band sets it.
+    #[test]
+    fn the_equalizer_card_opens_and_sets_a_band() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut app = headless_app();
+        assert!(draw_eq_panel(&ctx, &mut app, Vec::new()).is_empty());
+        app.apply(Action::ToggleEqPanel, &ctx);
+        assert!(app.show_eq_panel);
+        draw_eq_panel(&ctx, &mut app, Vec::new());
+        let texts = draw_eq_panel(&ctx, &mut app, Vec::new());
+        for label in ["Equalizer", "Pre", "60", "1K", "16K"] {
+            assert!(
+                texts.iter().any(|(text, _)| text == label),
+                "{label} is shown"
+            );
+        }
+        let one_k = texts
+            .iter()
+            .find(|(text, _)| text == "1K")
+            .map(|(_, pos)| *pos)
+            .unwrap();
+        assert!(one_k.x > 640.0, "the card sits on the right");
+        // The upper half of the 1 kHz slider boosts that band.
+        let pos = one_k - egui::vec2(0.0, 90.0);
+        app.actions.clear();
+        draw_eq_panel(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::SetEqBand(4, gain) if *gain > 0.0)),
+            "{:?}",
+            app.actions
+        );
+        app.apply(Action::ToggleEqPanel, &ctx);
+        assert!(!app.show_eq_panel);
+    }
+
+    /// Ctrl and the mouse wheel zoom in and out by ten per cent at a time,
+    /// within the same limits as the keyboard and Settings.
+    #[test]
+    fn ctrl_and_the_mouse_wheel_zoom_the_interface() {
+        let ctx = egui::Context::default();
+        let mut app = headless_app();
+        let mut frame = |app: &mut App, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.wheel_zoom(ui.ctx()),
+            );
+            output.textures_delta.clear();
+            // A new zoom factor takes effect from the next pass.
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+            output.textures_delta.clear();
+            app.zoom_wheel_at = None;
+            ctx.zoom_factor()
+        };
+        assert!((frame(&mut app, Vec::new()) - 1.0).abs() < 0.001);
+        assert!((frame(&mut app, vec![egui::Event::Zoom(1.3)]) - 1.1).abs() < 0.001);
+        assert!((frame(&mut app, vec![egui::Event::Zoom(1.01)]) - 1.2).abs() < 0.001);
+        assert!((frame(&mut app, vec![egui::Event::Zoom(0.8)]) - 1.1).abs() < 0.001);
+        for _ in 0..20 {
+            frame(&mut app, vec![egui::Event::Zoom(0.8)]);
+        }
+        assert!((ctx.zoom_factor() - 0.5).abs() < 0.001, "no smaller than 50%");
+        for _ in 0..30 {
+            frame(&mut app, vec![egui::Event::Zoom(1.3)]);
+        }
+        assert!((ctx.zoom_factor() - 2.5).abs() < 0.001, "no larger than 250%");
     }
 }

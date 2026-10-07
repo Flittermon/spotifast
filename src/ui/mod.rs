@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 pub mod artist;
 pub mod collection;
+pub mod eq_panel;
 pub(crate) mod devices;
 mod dialogs;
 pub mod home;
@@ -79,6 +80,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         keep_room_for_panels(app, ctx);
     }
     devices::popup(app, ctx);
+    eq_panel::popup(app, ctx);
     dialogs::show(app, ctx);
     update::show(app, ctx);
     widgets::drag_ghost(ctx, &app.palette, app.locale);

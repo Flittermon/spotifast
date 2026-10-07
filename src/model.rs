@@ -1209,6 +1209,8 @@ pub enum Action {
     ToggleWinampEq,
     /// Switch the equalizer's effect on the sound on or off.
     ToggleEq,
+    /// Open or close the equalizer card at the bottom right.
+    ToggleEqPanel,
     SetEqBand(usize, f32),
     SetEqPreamp(f32),
     /// One of Winamp's presets, by its place in the list.
