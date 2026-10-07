@@ -20,7 +20,10 @@ use super::models::*;
 use crate::http::Http;
 
 const BASE_URL: &str = "https://api.spotify.com/v1";
-const MAX_IN_FLIGHT: usize = 6;
+// Keep startup shelves from stampeding the Web API. Spotify applies a shared
+// rolling rate limit, so six concurrent retries can turn one 429 into a long
+// cooldown for the entire library.
+const MAX_IN_FLIGHT: usize = 2;
 const RATE_LIMIT_RETRIES: u32 = 3;
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 
@@ -441,12 +444,15 @@ impl ApiClient {
         let queue_write = method == Method::POST && path == "/me/player/queue";
         loop {
             attempt = u32::saturating_add(attempt, 1);
-            self.wait_for_cooldown().await;
             let permit = self
                 .limiter
                 .acquire()
                 .await
                 .map_err(|_| ApiError::NotSignedIn)?;
+            // Acquire a slot before checking the shared cooldown. Otherwise
+            // every queued request can pass the cooldown check together and
+            // hit Spotify in one burst as soon as Retry-After expires.
+            self.wait_for_cooldown().await;
             let token = provider.access_token().await?;
             let mut request = self
                 .http
@@ -497,8 +503,9 @@ impl ApiClient {
                     self.source,
                     wait.as_millis()
                 );
-                drop(permit);
                 self.extend_cooldown(wait).await;
+                // Publish the cooldown before waking the next queued request.
+                drop(permit);
                 if !queue_write && attempt > RATE_LIMIT_RETRIES {
                     return Err(ApiError::RateLimited);
                 }

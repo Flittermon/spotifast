@@ -798,8 +798,19 @@ fn nav_row(
     label: &str,
     active: bool,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 42.0), Sense::click());
     if ui.is_rect_visible(rect) {
+        if active || response.hovered() {
+            ui.painter().rect_filled(
+                rect,
+                egui::CornerRadius::same(4),
+                if active {
+                    palette.surface
+                } else {
+                    palette.surface_hover
+                },
+            );
+        }
         let color = if active || response.hovered() {
             palette.text
         } else {
@@ -1258,10 +1269,14 @@ fn contents(app: &mut App, ui: &mut egui::Ui, grid_art: Option<Rect>) {
             let art = app.backend.art().clone();
             super::widgets::virtual_rows(ui, entries.len(), row_height, |ui, index| {
                 let entry = &entries[index];
-                if !app.settings.sidebar_compact
+                if has_expanded_art(app)
+                    && !app.settings.sidebar_compact
                     && let Some(image) = &entry.image
                 {
-                    // Prepare the enlarged preview before this row is opened.
+                    // Only prepare softened covers while the expanded-art
+                    // view can use them. Doing this for every visible row
+                    // while that feature is off needlessly decodes and blurs
+                    // several album covers during library loading.
                     app.softened_covers.texture(ui.ctx(), &art, image);
                 }
                 let droppable = entry.liked || entry.editable;

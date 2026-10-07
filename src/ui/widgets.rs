@@ -13,7 +13,7 @@ use crate::theme::{self, Icon, Palette};
 use crate::util;
 
 pub const CARD_WIDTH: f32 = 172.0;
-pub const CARD_GAP: f32 = 14.0;
+pub const CARD_GAP: f32 = 12.0;
 pub const PAGE_PADDING: f32 = 24.0;
 
 /// Draws an image (or a placeholder) in a square.
@@ -2791,7 +2791,9 @@ pub fn search_field(
     hint: &str,
     width: f32,
 ) -> egui::Response {
-    let height = 34.0;
+    // A generous Spotify-style pill is easier to find and tap than a small
+    // toolbar field, while still fitting in the shared top navigation row.
+    let height = 40.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let has_focus = ui.memory(|memory| memory.has_focus(id));
     let fill = if has_focus {

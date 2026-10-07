@@ -34,7 +34,9 @@ const REMOTE_POLL_ACTIVE: Duration = Duration::from_secs(4);
 const REMOTE_POLL_IDLE: Duration = Duration::from_secs(20);
 const REMOTE_FRESH: Duration = Duration::from_secs(45);
 const DEVICES_FRESH: Duration = Duration::from_secs(12);
-const SEARCH_DEBOUNCE: Duration = Duration::from_millis(280);
+// Keep type-ahead feeling immediate while coalescing fast keystrokes into a
+// single Spotify request.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(180);
 /// How far into a song Previous restarts it rather than stepping back,
 /// matching what librespot does during playback.
 const RESTART_BEFORE_PREVIOUS: u32 = 3_000;

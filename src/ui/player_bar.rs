@@ -12,7 +12,7 @@ use crate::util;
 use super::widgets::{SliderEvent, thin_slider};
 
 /// How much of the playing art's tint the bar's fill carries.
-const TINT_STRENGTH: f32 = 0.12;
+const TINT_STRENGTH: f32 = 0.05;
 /// How long the bar takes to cross over to a new song's tint.
 const TINT_FADE_SECONDS: f32 = 0.45;
 const TINT_SESSION_ID: &str = "player-bar-tint-session";

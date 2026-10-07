@@ -38,17 +38,20 @@ impl Palette {
     pub fn dark() -> Self {
         Self {
             dark: true,
-            window: Color32::from_rgb(0x0f, 0x11, 0x14),
-            panel: Color32::from_rgb(0x15, 0x18, 0x1c),
-            surface: Color32::from_rgb(0x1d, 0x21, 0x27),
-            surface_hover: Color32::from_rgb(0x26, 0x2b, 0x33),
-            surface_active: Color32::from_rgb(0x2f, 0x35, 0x3f),
-            outline: Color32::from_rgb(0x2a, 0x30, 0x38),
-            text: Color32::from_rgb(0xf2, 0xf4, 0xf6),
-            secondary: Color32::from_rgb(0xa9, 0xb1, 0xbc),
-            dim: Color32::from_rgb(0x6e, 0x77, 0x84),
+            // Spotify's desktop hierarchy is nearly monochrome: the page is
+            // charcoal, library/queue surfaces are only a shade lighter, and
+            // cards become visible mostly on hover.
+            window: Color32::from_rgb(0x12, 0x12, 0x12),
+            panel: Color32::from_rgb(0x00, 0x00, 0x00),
+            surface: Color32::from_rgb(0x18, 0x18, 0x18),
+            surface_hover: Color32::from_rgb(0x28, 0x28, 0x28),
+            surface_active: Color32::from_rgb(0x33, 0x33, 0x33),
+            outline: Color32::from_rgb(0x28, 0x28, 0x28),
+            text: Color32::from_rgb(0xff, 0xff, 0xff),
+            secondary: Color32::from_rgb(0xb3, 0xb3, 0xb3),
+            dim: Color32::from_rgb(0x6a, 0x6a, 0x6a),
             accent: Color32::from_rgb(0x1e, 0xd7, 0x60),
-            accent_hover: Color32::from_rgb(0x3c, 0xe8, 0x7a),
+            accent_hover: Color32::from_rgb(0x3b, 0xe4, 0x78),
             on_accent: Color32::from_rgb(0x0a, 0x14, 0x0e),
             danger: Color32::from_rgb(0xf5, 0x71, 0x7f),
             warning: Color32::from_rgb(0xf2, 0xb8, 0x5c),
@@ -185,7 +188,7 @@ pub fn catalog_detail(
     }
 }
 
-pub const RADIUS: u8 = 8;
+pub const RADIUS: u8 = 6;
 pub const RADIUS_SMALL: u8 = 4;
 pub const ROW_HEIGHT: f32 = 56.0;
 pub const COMPACT_ROW_HEIGHT: f32 = 48.0;
@@ -888,7 +891,7 @@ pub fn link(
 }
 
 pub fn section_title(ui: &mut egui::Ui, palette: &Palette, label: &str) -> Response {
-    text(ui, label, bold(17.0), palette.text)
+    text(ui, label, bold(19.0), palette.text)
 }
 
 pub fn subtle(ui: &mut egui::Ui, palette: &Palette, label: &str) -> Response {
