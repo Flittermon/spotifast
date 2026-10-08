@@ -590,6 +590,10 @@ pub struct HomeData {
     pub recommendations: Loadable<Vec<Track>>,
     pub discover: HashMap<String, Loadable<Vec<Playlist>>>,
     pub discover_pending: HashMap<String, Loadable<Vec<Playlist>>>,
+    /// Whether this Home load has asked for the mixes of the top artists
+    /// yet. They are asked for once the top artists answer, and the Made
+    /// for you shelf waits for them before it is replaced.
+    pub artist_mixes_requested: bool,
     /// Saved podcasts with their newest episodes, in library order, for the
     /// podcast shelf. A refresh replaces them only once it answers.
     pub podcasts: Vec<(Show, Vec<Episode>)>,
@@ -601,7 +605,41 @@ pub struct HomeData {
     pub loaded_at: Option<Instant>,
 }
 
-pub const DISCOVER_TERMS: &[&str] = &["Discover Weekly", "Release Radar", "Daily Mix", "daylist"];
+/// The personal playlists the Made for you shelf searches for, in the
+/// order it shows them. Spotify also makes a "<Artist> Mix" for the artists
+/// the listener plays most; those are searched by name once the top artists
+/// are known (see [`ARTIST_MIXES`]).
+pub const DISCOVER_TERMS: &[&str] = &[
+    "Daily Mix",
+    "Discover Weekly",
+    "Release Radar",
+    "daylist",
+    "On Repeat",
+    "Repeat Rewind",
+    "Time Capsule",
+    "Your Top Songs",
+];
+
+/// How many of the top artists have their "<Artist> Mix" searched for.
+pub const ARTIST_MIXES: usize = 6;
+
+/// The name Spotify gives the personal mix of an artist's music.
+pub fn artist_mix_term(artist: &str) -> String {
+    format!("{} Mix", artist.trim())
+}
+
+/// Whether a playlist is one Spotify made for this listener alone. Their
+/// IDs carry a prefix of their own: `37i9dQZEVX` for Discover Weekly and
+/// Release Radar, `37i9dQZF1E` for the mixes, On Repeat and the rest.
+/// Spotify's editorial playlists start `37i9dQZF1D` instead. Artist radio
+/// shares the personal prefix but is not made for anyone, so it is left out.
+pub fn is_personal_playlist(playlist: &Playlist) -> bool {
+    let spotify =
+        playlist.owner.id.as_deref() == Some("spotify") || playlist.owner_name() == "Spotify";
+    spotify
+        && (playlist.id.starts_with("37i9dQZEVX") || playlist.id.starts_with("37i9dQZF1E"))
+        && !playlist.name.trim_end().to_lowercase().ends_with(" radio")
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SearchFilter {

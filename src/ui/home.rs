@@ -7,7 +7,10 @@ use egui::{CornerRadius, Rect, Sense, Vec2, pos2, vec2};
 use crate::api::models::{Episode, PlayableItem, Playlist, Show, pick_image};
 use crate::app::App;
 use crate::i18n::gettext;
-use crate::model::{Action, DISCOVER_TERMS, Loadable, Page, RowContext};
+use crate::model::{
+    ARTIST_MIXES, Action, DISCOVER_TERMS, Loadable, Page, RowContext, artist_mix_term,
+    is_personal_playlist,
+};
 use crate::theme::{self, Icon};
 
 use super::widgets::{self, TrackRow};
@@ -197,22 +200,58 @@ fn made_for_you(app: &mut App, ui: &mut egui::Ui) {
     let mut playlists: Vec<Playlist> = Vec::new();
     let mut loading = false;
     let mut failed = false;
-    for term in DISCOVER_TERMS {
-        match app.home.discover.get(*term) {
+    let add = |playlists: &mut Vec<Playlist>, playlist: &Playlist| {
+        let duplicate = playlists.iter().any(|existing| {
+            existing.id == playlist.id || existing.name.eq_ignore_ascii_case(&playlist.name)
+        });
+        if !duplicate {
+            playlists.push(playlist.clone());
+        }
+    };
+    // The fixed kinds first, then the top artists' mixes in their order,
+    // then whatever else this load found.
+    let mut terms: Vec<String> = DISCOVER_TERMS
+        .iter()
+        .map(|term| (*term).to_string())
+        .collect();
+    terms.extend(
+        app.home
+            .top_artists
+            .get()
+            .into_iter()
+            .flatten()
+            .take(ARTIST_MIXES)
+            .map(|artist| artist_mix_term(&artist.name)),
+    );
+    let mut rest: Vec<&String> = app
+        .home
+        .discover
+        .keys()
+        .filter(|term| !terms.contains(term))
+        .collect();
+    rest.sort();
+    let rest: Vec<String> = rest.into_iter().cloned().collect();
+    terms.extend(rest);
+    for term in &terms {
+        match app.home.discover.get(term) {
             Some(Loadable::Loaded(list)) => {
                 for playlist in list {
-                    let duplicate = playlists.iter().any(|existing| {
-                        existing.id == playlist.id
-                            || existing.name.eq_ignore_ascii_case(&playlist.name)
-                    });
-                    if !duplicate {
-                        playlists.push(playlist.clone());
-                    }
+                    add(&mut playlists, playlist);
                 }
             }
             Some(Loadable::Loading) => loading = true,
             Some(Loadable::Failed(_)) => failed = true,
             _ => {}
+        }
+    }
+    // Personal playlists the listener saved, such as genre and decade
+    // mixes that no search above names.
+    if let Some(saved) = app.library.playlists.get() {
+        for playlist in saved
+            .iter()
+            .filter(|playlist| is_personal_playlist(playlist))
+        {
+            add(&mut playlists, playlist);
         }
     }
     if playlists.is_empty() && !loading && !failed {

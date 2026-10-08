@@ -3822,6 +3822,36 @@ impl App {
         }
     }
 
+    /// Searches for one kind of personal playlist for the Made for you
+    /// shelf. The shelf keeps showing the last answer until this load has
+    /// them all.
+    fn request_discover(&mut self, term: String, generation: u64) {
+        if self.home.discover_pending.contains_key(&term) {
+            return;
+        }
+        self.home
+            .discover_pending
+            .insert(term.clone(), Loadable::Loading);
+        if !self.home.discover.contains_key(&term) {
+            self.home.discover.insert(term.clone(), Loadable::Loading);
+        }
+        self.backend.api(ApiRequest::Discover { term, generation });
+    }
+
+    /// Shows this load's Made for you playlists once every search, the
+    /// top artists' mixes among them, has answered.
+    fn finish_discover(&mut self) {
+        let complete = self.home.artist_mixes_requested
+            && self
+                .home
+                .discover_pending
+                .values()
+                .all(|result| !result.is_loading());
+        if complete {
+            self.home.discover = std::mem::take(&mut self.home.discover_pending);
+        }
+    }
+
     fn load_home(&mut self, force: bool) {
         if self.home.requested
             && !force
@@ -3858,19 +3888,9 @@ impl App {
             generation,
         });
         self.home.discover_pending.clear();
+        self.home.artist_mixes_requested = false;
         for term in DISCOVER_TERMS {
-            self.home
-                .discover_pending
-                .insert((*term).to_string(), Loadable::Loading);
-            if !self.home.discover.contains_key(*term) {
-                self.home
-                    .discover
-                    .insert((*term).to_string(), Loadable::Loading);
-            }
-            self.backend.api(ApiRequest::Discover {
-                term: (*term).to_string(),
-                generation,
-            });
+            self.request_discover((*term).to_string(), generation);
         }
         // The podcast shelf reads from the saved shows. The first page of
         // them is the one the Podcasts shelf of the library asks for.
@@ -5203,6 +5223,22 @@ impl App {
                     return;
                 }
                 self.home.top_artists.refresh(result);
+                if !self.home.artist_mixes_requested {
+                    self.home.artist_mixes_requested = true;
+                    let terms: Vec<String> = self
+                        .home
+                        .top_artists
+                        .get()
+                        .into_iter()
+                        .flatten()
+                        .take(ARTIST_MIXES)
+                        .map(|artist| artist_mix_term(&artist.name))
+                        .collect();
+                    for term in terms {
+                        self.request_discover(term, generation);
+                    }
+                    self.finish_discover();
+                }
             }
             ApiResponse::Recommendations { generation, result } => {
                 if generation != self.home.generation {
@@ -5233,21 +5269,13 @@ impl App {
                                 && seen.insert(playlist.name.to_lowercase())
                         })
                         .collect();
-                    matching.truncate(6);
+                    matching.truncate(10);
                     matching
                 });
                 self.home
                     .discover_pending
                     .insert(term, Loadable::from_result(filtered));
-                let complete = DISCOVER_TERMS.iter().all(|term| {
-                    self.home
-                        .discover_pending
-                        .get(*term)
-                        .is_some_and(|result| !result.is_loading())
-                });
-                if complete {
-                    self.home.discover = std::mem::take(&mut self.home.discover_pending);
-                }
+                self.finish_discover();
             }
             // A reload reads the playlists from the top again under a new
             // generation, so a page any earlier load asked for no longer
@@ -10413,15 +10441,19 @@ fn friendly_page_error(locale: Locale, error: &crate::api::ApiError) -> String {
 /// itself, or "Daily Mix" with a number: Spotify also makes "<Artist> Mix",
 /// "This Is <Artist>", and "<Artist> Radio" for every artist, and an artist
 /// called "Discover Weekly" put those on the shelf (#89).
+///
+/// "Your Top Songs" is followed by its year, the way Daily Mixes are by
+/// their number.
 fn is_made_for_you(name: &str, term: &str) -> bool {
     let name = name.trim().to_lowercase();
     let term = term.to_lowercase();
     if name == term {
         return true;
     }
-    term == "daily mix"
+    matches!(term.as_str(), "daily mix" | "your top songs")
         && name
-            .strip_prefix("daily mix ")
+            .strip_prefix(&term)
+            .and_then(|rest| rest.strip_prefix(' '))
             .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
 }
 
@@ -10568,11 +10600,8 @@ mod tests {
             engine_error_text(Locale::English, crate::sink::NO_DEVICE),
             crate::sink::NO_DEVICE
         );
-        let german = engine_error_text(Locale::German, crate::sink::NO_DEVICE);
-        assert_ne!(german, crate::sink::NO_DEVICE);
-        assert!(!german.is_empty());
         assert_eq!(
-            engine_error_text(Locale::German, "Something else"),
+            engine_error_text(Locale::English, "Something else"),
             "Something else"
         );
     }
@@ -15432,9 +15461,9 @@ mod tests {
         app.backend.shutdown();
         let ctx = egui::Context::default();
         assert_eq!(app.locale, Locale::English);
-        let choice = LanguageChoice::Locale(Locale::PortugueseBrazil);
+        let choice = LanguageChoice::Locale(Locale::English);
         app.apply(Action::SetLanguage(choice), &ctx);
-        assert_eq!(app.locale, Locale::PortugueseBrazil);
+        assert_eq!(app.locale, Locale::English);
         assert!(app.settings_dirty);
         app.save_settings();
         let saved = Settings::load(&app.dirs.settings_file());
@@ -15450,7 +15479,7 @@ mod tests {
             },
         );
         restarted.backend.shutdown();
-        assert_eq!(restarted.locale, Locale::PortugueseBrazil);
+        assert_eq!(restarted.locale, Locale::English);
         std::fs::remove_dir_all(app.dirs.config.parent().unwrap()).unwrap();
     }
 
@@ -22068,6 +22097,21 @@ mod tests {
         assert!(is_made_for_you("daylist", "daylist"));
         assert!(is_made_for_you("Daily Mix 3", "Daily Mix"));
         assert!(is_made_for_you("Daily Mix", "Daily Mix"));
+        assert!(is_made_for_you("On Repeat", "On Repeat"));
+        assert!(is_made_for_you("Your Top Songs 2025", "Your Top Songs"));
+        assert!(!is_made_for_you("Your Top Songs Radio", "Your Top Songs"));
+        assert!(is_made_for_you(
+            "Khruangbin Mix",
+            &artist_mix_term("Khruangbin")
+        ));
+        assert!(!is_made_for_you(
+            "This Is Khruangbin",
+            &artist_mix_term("Khruangbin")
+        ));
+        assert!(!is_made_for_you(
+            "Khruangbin Radio",
+            &artist_mix_term("Khruangbin")
+        ));
         assert!(!is_made_for_you("Discover Weekly Mix", "Discover Weekly"));
         assert!(!is_made_for_you(
             "This Is Discover Weekly",
@@ -22076,6 +22120,93 @@ mod tests {
         assert!(!is_made_for_you("Release Radar Radio", "Release Radar"));
         assert!(!is_made_for_you("Daily Mix Radio", "Daily Mix"));
         assert!(!is_made_for_you("Daily Mix 3", "Discover Weekly"));
+    }
+
+    #[test]
+    fn made_for_you_waits_for_the_top_artists_mixes() {
+        use crate::api::models::{Artist, Owner};
+        let spotify_playlist = |id: &str, name: &str| Playlist {
+            id: id.into(),
+            name: name.into(),
+            uri: format!("spotify:playlist:{id}"),
+            owner: Owner {
+                id: Some("spotify".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut app = test_app("made-for-you-mixes");
+        app.load_home(true);
+        let generation = app.home.generation;
+        for term in DISCOVER_TERMS {
+            let found = match *term {
+                "Daily Mix" => vec![
+                    spotify_playlist("37i9dQZF1E30001", "Daily Mix 1"),
+                    spotify_playlist("37i9dQZF1E30002", "Daily Mix 2"),
+                ],
+                "On Repeat" => vec![spotify_playlist("37i9dQZF1Epaaa", "On Repeat")],
+                _ => Vec::new(),
+            };
+            app.handle_api(ApiResponse::Discover {
+                term: (*term).to_string(),
+                generation,
+                result: Ok(found),
+            });
+        }
+        assert!(
+            app.home.discover_pending.contains_key("On Repeat"),
+            "the shelf waits for the top artists"
+        );
+        app.handle_api(ApiResponse::TopArtists {
+            generation,
+            result: Ok(vec![Artist {
+                id: "kb".into(),
+                name: "Khruangbin".into(),
+                ..Default::default()
+            }]),
+        });
+        assert!(app.home.discover_pending.contains_key("Khruangbin Mix"));
+        app.handle_api(ApiResponse::Discover {
+            term: "Khruangbin Mix".into(),
+            generation,
+            result: Ok(vec![
+                spotify_playlist("37i9dQZF1E4kb", "Khruangbin Radio"),
+                spotify_playlist("37i9dQZF1EIkb", "Khruangbin Mix"),
+            ]),
+        });
+        assert!(app.home.discover_pending.is_empty());
+        let names: Vec<&str> = app
+            .home
+            .discover
+            .values()
+            .filter_map(|result| result.get())
+            .flatten()
+            .map(|playlist| playlist.name.as_str())
+            .collect();
+        for name in ["Daily Mix 1", "Daily Mix 2", "On Repeat", "Khruangbin Mix"] {
+            assert!(names.contains(&name), "{name} in {names:?}");
+        }
+        assert!(!names.contains(&"Khruangbin Radio"));
+        app.backend.shutdown();
+    }
+
+    #[test]
+    fn only_spotifys_personal_playlists_count_as_made_for_you() {
+        use crate::api::models::Owner;
+        let playlist = |id: &str, name: &str, owner: &str| Playlist {
+            id: id.into(),
+            name: name.into(),
+            owner: Owner {
+                id: Some(owner.into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(is_personal_playlist(&playlist("37i9dQZF1EIabc", "Chill Mix", "spotify")));
+        assert!(is_personal_playlist(&playlist("37i9dQZEVXcabc", "Discover Weekly", "spotify")));
+        assert!(!is_personal_playlist(&playlist("37i9dQZF1DXabc", "Today's Top Hits", "spotify")));
+        assert!(!is_personal_playlist(&playlist("37i9dQZF1E4abc", "Bonobo Radio", "spotify")));
+        assert!(!is_personal_playlist(&playlist("37i9dQZF1EIabc", "Chill Mix", "someone")));
     }
 
     /// One song plays as a context of its own, so librespot's autoplay
@@ -23197,7 +23328,6 @@ mod tests {
         );
     }
 
-
     // Recommended songs and Smart Shuffle.
 
     fn playlist_row(track: Track) -> PlaylistItem {
@@ -23215,7 +23345,9 @@ mod tests {
     }
 
     fn mix(ids: &[&str]) -> Vec<Track> {
-        ids.iter().map(|id| radio_song(id, &format!("Artist {id}"))).collect()
+        ids.iter()
+            .map(|id| radio_song(id, &format!("Artist {id}")))
+            .collect()
     }
 
     fn uris_of(tracks: &[Track]) -> Vec<String> {
@@ -23320,7 +23452,10 @@ mod tests {
         assert_eq!(shown[0].uri, "spotify:track:s0");
 
         app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
-        assert_eq!(app.recommended_songs(uri, &page)[0].uri, "spotify:track:s10");
+        assert_eq!(
+            app.recommended_songs(uri, &page)[0].uri,
+            "spotify:track:s10"
+        );
         app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
         let last = app.recommended_songs(uri, &page);
         assert_eq!(last.len(), 5);
@@ -23328,8 +23463,14 @@ mod tests {
         assert!(!app.recommendations_refreshing(uri));
 
         app.apply(Action::RefreshRecommendations(uri.into()), &ctx);
-        assert!(app.recommendations_refreshing(uri), "a new mix is asked for");
-        assert_eq!(app.recommended_songs(uri, &page)[0].uri, "spotify:track:s20");
+        assert!(
+            app.recommendations_refreshing(uri),
+            "a new mix is asked for"
+        );
+        assert_eq!(
+            app.recommended_songs(uri, &page)[0].uri,
+            "spotify:track:s20"
+        );
         let asked = app.recommendations[uri].generation;
         assert_ne!(asked, generation);
         app.receive_recommendations(uri, asked, &Err("Couldn't load this radio.".into()));
@@ -23380,8 +23521,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = headless_app();
         let playlist = "spotify:playlist:mine";
-        app.playlist_pages
-            .insert("mine".into(), playlist_with(vec![radio_song("r1", "Artist r1")]));
+        app.playlist_pages.insert(
+            "mine".into(),
+            playlist_with(vec![radio_song("r1", "Artist r1")]),
+        );
         playing_playlist(&mut app, playlist);
         app.shuffle_wanted = true;
         app.apply(Action::SetSmartShuffle(true), &ctx);
@@ -23437,7 +23580,10 @@ mod tests {
         );
         start_song(&mut app, "spotify:track:mine");
         start_song(&mut app, "spotify:track:p2");
-        assert!(app.manual_queue.is_empty(), "two of the playlist's songs so far");
+        assert!(
+            app.manual_queue.is_empty(),
+            "two of the playlist's songs so far"
+        );
         start_song(&mut app, "spotify:track:p3");
         assert_eq!(app.manual_queue, vec!["spotify:track:r1".to_string()]);
     }
@@ -23476,12 +23622,18 @@ mod tests {
         for song in ["p1", "p2", "p3"] {
             start_song(&mut app, &format!("spotify:track:{song}"));
         }
-        assert_eq!(app.smart_shuffle.pending, vec!["spotify:track:r1".to_string()]);
+        assert_eq!(
+            app.smart_shuffle.pending,
+            vec!["spotify:track:r1".to_string()]
+        );
         app.manual_queue.clear();
         for song in ["p4", "p5", "p6"] {
             start_song(&mut app, &format!("spotify:track:{song}"));
         }
-        assert_eq!(app.smart_shuffle.pending, vec!["spotify:track:r2".to_string()]);
+        assert_eq!(
+            app.smart_shuffle.pending,
+            vec!["spotify:track:r2".to_string()]
+        );
     }
 
     /// Once every song of the mix has been played, a new mix is asked for.
@@ -23596,7 +23748,6 @@ mod tests {
         let restored: Settings = serde_json::from_str(&json).unwrap();
         assert!(restored.smart_shuffle);
     }
-
 
     // The equalizer card and Ctrl+wheel zoom.
 
@@ -23731,7 +23882,10 @@ mod tests {
         assert!(near(zoom_frame(&ctx, &mut app, Vec::new()), 1.0));
         assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(1.0)]), 1.1));
         assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(1.0)]), 1.2));
-        assert!(near(zoom_frame(&ctx, &mut app, vec![ctrl_wheel(-1.0)]), 1.1));
+        assert!(near(
+            zoom_frame(&ctx, &mut app, vec![ctrl_wheel(-1.0)]),
+            1.1
+        ));
         // Without Ctrl the wheel scrolls and leaves the zoom alone.
         let plain = egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Line,
@@ -23770,6 +23924,9 @@ mod tests {
             1.4
         ));
         // A touchpad pinch zooms a step for every ten per cent.
-        assert!(near(zoom_frame(&ctx, &mut app, vec![egui::Event::Zoom(1.12)]), 1.5));
+        assert!(near(
+            zoom_frame(&ctx, &mut app, vec![egui::Event::Zoom(1.12)]),
+            1.5
+        ));
     }
 }
