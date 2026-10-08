@@ -17,7 +17,9 @@ use crate::http::Http;
 /// reloaded every two and a half minutes (#129).
 ///
 /// Size-based eviction keeps visible images stable.
-const HELD_BYTES: usize = 64 * 1024 * 1024;
+/// 16 MB rather than 64: covers out of view are let go sooner and come
+/// back from the disk cache, keeping memory low.
+const HELD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ART_BYTES: usize = 8 * 1024 * 1024;
 
 /// Decoded ColorImage plus the GPU texture, both RGBA.
