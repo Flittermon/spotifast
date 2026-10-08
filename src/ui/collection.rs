@@ -1604,9 +1604,15 @@ fn recommended_songs(
                 .into();
             let context = RowContext::Uris(Arc::clone(&uris));
             let (add_label, add_hint) = if can_edit {
-                (gettext(locale, "Add"), gettext(locale, "Add to this playlist"))
+                (
+                    gettext(locale, "Add"),
+                    gettext(locale, "Add to this playlist"),
+                )
             } else {
-                (gettext(locale, "Add to queue"), gettext(locale, "Add to queue"))
+                (
+                    gettext(locale, "Add to queue"),
+                    gettext(locale, "Add to queue"),
+                )
             };
             // The pill's own width (label plus padding) and a gap before it.
             let add_width = ui
@@ -2396,10 +2402,7 @@ mod tests {
         let mut draw = |app: &mut App, events: Vec<egui::Event>| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(1000.0, 2400.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 2400.0))),
                     events,
                     ..Default::default()
                 },
@@ -2418,11 +2421,7 @@ mod tests {
         assert!(first.iter().any(|(text, _)| text == "Recommended songs"));
         let uri = "spotify:playlist:mine";
         let generation = app.recommendations[uri].generation;
-        assert!(app.receive_recommendations(
-            uri,
-            generation,
-            &Ok(vec![song("in"), song("new")])
-        ));
+        assert!(app.receive_recommendations(uri, generation, &Ok(vec![song("in"), song("new")])));
         draw(&mut app, Vec::new());
         let shown = draw(&mut app, Vec::new());
         let adds: Vec<egui::Pos2> = shown
@@ -2521,10 +2520,7 @@ mod tests {
         let mut draw = |app: &mut App, events: Vec<egui::Event>| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(1000.0, 2400.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 2400.0))),
                     events,
                     ..Default::default()
                 },

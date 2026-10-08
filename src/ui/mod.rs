@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 pub mod artist;
 pub mod collection;
-pub mod eq_panel;
 pub(crate) mod devices;
 mod dialogs;
+pub mod eq_panel;
 pub mod home;
 mod keys;
 pub mod library;

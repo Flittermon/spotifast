@@ -121,7 +121,10 @@ fn session_serves(operation: Operation, personal_ready: bool) -> bool {
 fn plan(operation: Operation, personal_ready: bool) -> ApiSource {
     use Operation::*;
     match operation {
-        CanonicalAccount | PlaylistLibrary | PlaylistSearch | UnsupportedDevelopmentMode
+        CanonicalAccount
+        | PlaylistLibrary
+        | PlaylistSearch
+        | UnsupportedDevelopmentMode
         | SessionCatalog => ApiSource::Shared,
         PlaylistMetadata(PlaylistAccess::External | PlaylistAccess::Unknown)
         | PlaylistItems(PlaylistAccess::External | PlaylistAccess::Unknown)

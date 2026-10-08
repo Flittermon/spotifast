@@ -3902,12 +3902,12 @@ async fn over_session(engine: &Engine, request: &ApiRequest) -> Option<ApiRespon
             SessionRead::Sample { id, offset } => SessionAnswer::Rows(settle(
                 session_reads::sample(session, id, offset, PLAYLIST_PAGE_SIZE).await,
             )?),
-            SessionRead::TopTracks { id } => SessionAnswer::Tracks(settle(
-                session_reads::artist_top_tracks(session, id).await,
-            )?),
-            SessionRead::Related { id } => SessionAnswer::Artists(settle(
-                session_reads::related_artists(session, id).await,
-            )?),
+            SessionRead::TopTracks { id } => {
+                SessionAnswer::Tracks(settle(session_reads::artist_top_tracks(session, id).await)?)
+            }
+            SessionRead::Related { id } => {
+                SessionAnswer::Artists(settle(session_reads::related_artists(session, id).await)?)
+            }
             SessionRead::Recommendations { seed_tracks } => SessionAnswer::Tracks(settle(
                 session_reads::recommendations(session, seed_tracks).await,
             )?),
@@ -3926,15 +3926,29 @@ async fn over_session(engine: &Engine, request: &ApiRequest) -> Option<ApiRespon
 /// where the session serves the operation.
 #[derive(Debug, PartialEq)]
 enum SessionRead<'a> {
-    Header { id: &'a str },
-    Rows { id: &'a str, offset: u32 },
-    Sample { id: &'a str, offset: u32 },
+    Header {
+        id: &'a str,
+    },
+    Rows {
+        id: &'a str,
+        offset: u32,
+    },
+    Sample {
+        id: &'a str,
+        offset: u32,
+    },
     /// An artist's popular songs.
-    TopTracks { id: &'a str },
+    TopTracks {
+        id: &'a str,
+    },
     /// The artists related to an artist.
-    Related { id: &'a str },
+    Related {
+        id: &'a str,
+    },
     /// Songs that go with the seed songs; artist seeds stay the Web API's.
-    Recommendations { seed_tracks: &'a [String] },
+    Recommendations {
+        seed_tracks: &'a [String],
+    },
 }
 
 fn session_read(request: &ApiRequest) -> Option<SessionRead<'_>> {
@@ -6139,9 +6153,15 @@ mod session_tests {
     #[test]
     fn the_session_reads_artists_and_recommendations() {
         let top = ApiRequest::ArtistTopTracks { id: "a1".into() };
-        assert_eq!(session_read(&top), Some(SessionRead::TopTracks { id: "a1" }));
+        assert_eq!(
+            session_read(&top),
+            Some(SessionRead::TopTracks { id: "a1" })
+        );
         let related = ApiRequest::RelatedArtists { id: "a1".into() };
-        assert_eq!(session_read(&related), Some(SessionRead::Related { id: "a1" }));
+        assert_eq!(
+            session_read(&related),
+            Some(SessionRead::Related { id: "a1" })
+        );
         let seeds = vec!["t1".to_string(), "t2".to_string()];
         let by_songs = ApiRequest::Recommendations {
             seed_tracks: seeds.clone(),
@@ -6177,7 +6197,10 @@ mod session_tests {
         ));
         assert!(matches!(
             session_response(&by_songs, SessionAnswer::Tracks(Ok(vec![song]))),
-            Some(ApiResponse::Recommendations { generation: 4, result: Ok(_) })
+            Some(ApiResponse::Recommendations {
+                generation: 4,
+                result: Ok(_)
+            })
         ));
         assert!(
             session_response(&top, SessionAnswer::Artists(Ok(Vec::new()))).is_none(),
