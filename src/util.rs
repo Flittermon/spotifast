@@ -498,37 +498,11 @@ mod tests {
     #[test]
     fn dates_and_lengths_follow_the_interface_language() {
         let now: jiff::Timestamp = "2026-08-31T12:00:00Z".parse().unwrap();
-        assert_eq!(format_date(Locale::Spanish, "2024-01-05"), "5 ene 2024");
-        assert_eq!(format_date(Locale::Spanish, "2024-09"), "sept 2024");
-        assert_eq!(format_total_ms(Locale::Spanish, 7_980_000), "2 h 13 min");
-        assert_eq!(format_episode_ms(Locale::Spanish, 2_280_000), "38 min");
-        for (added, expected) in [
-            ("2026-08-31T11:59:59Z", "hace 1 segundo"),
-            ("2026-08-31T11:58:00Z", "hace 2 minutos"),
-            ("2026-08-30T12:00:00Z", "hace 1 día"),
-            ("2026-08-17T12:00:00Z", "hace 2 semanas"),
-        ] {
-            assert_eq!(format_relative_date(Locale::Spanish, added, now), expected);
-        }
-        // Each language orders the date its own way.
-        assert_eq!(format_date(Locale::Swedish, "2024-01-05"), "5 jan. 2024");
         assert_eq!(format_date(Locale::English, "2024-01-05"), "Jan 5, 2024");
         assert_eq!(
-            format_relative_date(Locale::Swedish, "2026-08-30T12:00:00Z", now),
-            "för 1 dag sedan"
+            format_relative_date(Locale::English, "2026-08-30T12:00:00Z", now),
+            "1 day ago"
         );
-        assert_eq!(format_date(Locale::Turkish, "2024-01-05"), "5 Oca 2024");
-        assert_eq!(format_date(Locale::Turkish, "2024-09"), "Eyl 2024");
-        assert_eq!(format_total_ms(Locale::Turkish, 7_980_000), "2 sa 13 dk");
-        assert_eq!(format_episode_ms(Locale::Turkish, 2_280_000), "38 dk");
-        for (added, expected) in [
-            ("2026-08-31T11:59:59Z", "1 saniye önce"),
-            ("2026-08-31T11:58:00Z", "2 dakika önce"),
-            ("2026-08-30T12:00:00Z", "1 gün önce"),
-            ("2026-08-17T12:00:00Z", "2 hafta önce"),
-        ] {
-            assert_eq!(format_relative_date(Locale::Turkish, added, now), expected);
-        }
     }
 
     #[test]

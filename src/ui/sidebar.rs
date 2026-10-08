@@ -2378,7 +2378,7 @@ mod ordering_tests {
         use crate::i18n::Locale;
         use crate::player::RootlistEntry::{FolderEnd, FolderStart, Playlist};
         let mut app = app("folder-locale");
-        app.locale = Locale::German;
+        app.locale = Locale::English;
         app.rootlist = vec![
             FolderStart {
                 id: "folder".into(),
@@ -2390,9 +2390,9 @@ mod ordering_tests {
         ];
         let mut entries = vec![];
         folder_rows(&app, "", &mut entries);
-        assert_eq!(entries[0].name, "Ordner");
-        assert_eq!(entries[0].subtitle, "Ordner • 2 Playlists");
-        assert_eq!(entries[0].grid_subtitle, "2 Playlists");
+        assert_eq!(entries[0].name, "Folder");
+        assert_eq!(entries[0].subtitle, "Folder • 2 playlists");
+        assert_eq!(entries[0].grid_subtitle, "2 playlists");
         app.backend.shutdown();
     }
 

@@ -939,21 +939,12 @@ mod tests {
         for (json, choice) in [
             (serde_json::json!("system"), LanguageChoice::System),
             (
-                serde_json::json!("es"),
-                LanguageChoice::Locale(Locale::Spanish),
+                serde_json::json!("en"),
+                LanguageChoice::Locale(Locale::English),
             ),
-            (
-                serde_json::json!("pt-BR"),
-                LanguageChoice::Locale(Locale::PortugueseBrazil),
-            ),
-            (
-                serde_json::json!("zh-Hant"),
-                LanguageChoice::Locale(Locale::ChineseTraditional),
-            ),
-            (
-                serde_json::json!("de"),
-                LanguageChoice::Locale(Locale::German),
-            ),
+            // A language no longer bundled follows the system, in English.
+            (serde_json::json!("de-DE"), LanguageChoice::System),
+            (serde_json::json!("pt-BR"), LanguageChoice::System),
             // A language a later version added, or a hand-edited typo, keeps
             // the rest of the file and follows the system.
             (serde_json::json!("tlh"), LanguageChoice::System),
